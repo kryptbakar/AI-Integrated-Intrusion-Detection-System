@@ -21,11 +21,81 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS - Dark theme with black background
 st.markdown('''
     <style>
-    .main {background-color: #f5f5f5;}
-    .stMetric {background-color: white; padding: 10px; border-radius: 5px;}
+    /* Main background */
+    .main {
+        background-color: #000000;
+        color: #ffffff;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #1a1a1a;
+    }
+    
+    /* Metrics */
+    .stMetric {
+        background-color: #1a1a1a;
+        padding: 10px;
+        border-radius: 5px;
+        border: 1px solid #333333;
+    }
+    
+    /* Text elements */
+    .stMarkdown, p, span, label {
+        color: #ffffff !important;
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
+        color: #ffffff !important;
+    }
+    
+    /* Dataframes */
+    .dataframe {
+        background-color: #1a1a1a !important;
+        color: #ffffff !important;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background-color: #333333;
+        color: #ffffff;
+        border: 1px solid #555555;
+    }
+    
+    .stButton > button:hover {
+        background-color: #444444;
+        border: 1px solid #666666;
+    }
+    
+    /* Input fields */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input,
+    .stSelectbox > div > div > div {
+        background-color: #1a1a1a;
+        color: #ffffff;
+        border: 1px solid #333333;
+    }
+    
+    /* Sliders */
+    .stSlider > div > div > div {
+        background-color: #333333;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #1a1a1a;
+        color: #ffffff;
+    }
+    
+    /* Info/Warning/Error boxes */
+    .stAlert {
+        background-color: #1a1a1a;
+        border: 1px solid #333333;
+    }
     </style>
 ''', unsafe_allow_html=True)
 
@@ -59,16 +129,22 @@ run_btn = st.sidebar.button("🚀 Run Pipeline", type="primary")
 # Helper functions
 @st.cache_data(show_spinner=False)
 def _persist_upload_to_tmp(bin_data: bytes) -> str:
-    '''Save uploaded file to temp location'''
+    """Save uploaded file to temp location"""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
     with open(tmp.name, "wb") as f:
         f.write(bin_data)
     return tmp.name
 
 @st.cache_resource(show_spinner=False)
-def _run_pipeline(path: str, test_size: float, xgb_t: float,
-                  oc_nu: float, oc_ratio: float, linear: bool):
-    '''Run pipeline with caching'''
+def _run_pipeline(
+    path: str,
+    test_size: float,
+    xgb_t: float,
+    oc_nu: float,
+    oc_ratio: float,
+    linear: bool
+) -> tuple[OptimizedVotingHybridPipeline, dict]:
+    """Run pipeline with caching"""
     pipe = OptimizedVotingHybridPipeline(
         data_path=path,
         xgb_threshold=xgb_t,
@@ -81,8 +157,12 @@ def _run_pipeline(path: str, test_size: float, xgb_t: float,
     return pipe, artifacts
 
 @st.cache_resource(show_spinner=False)
-def _shap_setup(xgb_model, X_train_scaled, feature_names):
-    '''Setup SHAP explainer with caching'''
+def _shap_setup(
+    xgb_model,
+    X_train_scaled: np.ndarray,
+    feature_names: np.ndarray
+) -> tuple:
+    """Setup SHAP explainer with caching"""
     bg = _safe_background(X_train_scaled, max_rows=1000)
     explainer = build_tree_explainer(xgb_model, bg)
     return explainer, bg
@@ -93,6 +173,36 @@ st.markdown("**XGBoost + One-Class SVM with SHAP/LIME Explainability**")
 st.caption("Temporal split • Aggressive balancing • OR-voting • Model interpretability")
 st.markdown("---")
 
+# Check if we should show initial instructions
+if not run_btn:
+    # Initial state
+    st.info("👈 Configure parameters in the sidebar and click **Run Pipeline** to start")
+
+    st.markdown('''### 🎯 What This Dashboard Does''')
+    st.markdown('''
+    - **Hybrid Detection**: Combines XGBoost (supervised) and One-Class SVM (anomaly detection)
+    - **No Data Leakage**: Strict temporal split with proper validation
+    - **Explainability**: SHAP and LIME for model interpretation
+    - **Interactive Analysis**: Explore predictions, thresholds, and feature importance
+    ''')
+
+    st.markdown('''### 📋 Requirements''')
+    st.markdown('''
+    - CSV file with network traffic data
+    - Must contain a 'Label' column (BENIGN or attack types)
+    - Numeric features for classification
+    ''')
+    
+    st.markdown('''### ⚠️ Important Notes''')
+    st.markdown('''
+    - **Default file**: Uses `merged_output.csv` from current directory
+    - **Upload**: Or upload your own CSV file in the sidebar
+    - **Processing time**: May take 5-15 minutes depending on dataset size
+    - **First run**: Will take longer due to model training
+    ''')
+    
+    st.stop()  # Stop execution here if button not pressed
+
 # Main execution
 if run_btn:
     # Determine data path
@@ -102,16 +212,58 @@ if run_btn:
     else:
         path = default_path
         st.info(f"Using local file: {path}")
+    
+    # Check if file exists
+    import os
+    if not os.path.exists(path):
+        st.error(f"❌ Error: File not found at path: `{path}`")
+        st.error("Please either:")
+        st.markdown("1. Upload a CSV file using the sidebar uploader, OR")
+        st.markdown("2. Ensure `merged_output.csv` exists in the app directory")
+        st.stop()
+    
+    # Check file size
+    file_size_mb = os.path.getsize(path) / (1024 * 1024)
+    st.info(f"📊 Dataset size: {file_size_mb:.2f} MB")
+    
+    if file_size_mb > 500:
+        st.warning("⚠️ Large dataset detected! Processing may take 10-20 minutes.")
+        st.warning("Consider using a smaller sample for initial testing.")
 
-    # Run pipeline
-    with st.spinner("🔄 Running pipeline... This may take a few minutes."):
-        try:
-            pipe, art = _run_pipeline(
-                path, test_size, xgb_threshold, ocsvm_nu, ocsvm_sample, linear
-            )
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-            st.stop()
+    # Run pipeline with better progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        status_text.text("🔄 Step 1/5: Loading dataset...")
+        progress_bar.progress(20)
+        
+        status_text.text("🔄 Step 2/5: Training models...")
+        progress_bar.progress(40)
+        
+        pipe, art = _run_pipeline(
+            path, test_size, xgb_threshold, ocsvm_nu, ocsvm_sample, linear
+        )
+        
+        status_text.text("🔄 Step 3/5: Generating predictions...")
+        progress_bar.progress(60)
+        
+        status_text.text("🔄 Step 4/5: Computing metrics...")
+        progress_bar.progress(80)
+        
+        status_text.text("🔄 Step 5/5: Preparing visualizations...")
+        progress_bar.progress(100)
+        
+        status_text.empty()
+        progress_bar.empty()
+        
+    except FileNotFoundError as e:
+        st.error(f"❌ File Error: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Error during pipeline execution:")
+        st.exception(e)
+        st.stop()
 
     st.success("✅ Pipeline completed successfully!")
 
@@ -198,37 +350,56 @@ if run_btn:
     st.header("🔍 Global Model Explanations (SHAP)")
     st.markdown("Understanding which features drive XGBoost predictions globally")
 
+    X_test_s = art["X_test_scaled"]
+    
+    # Determine safe default for SHAP
+    if len(X_test_s) > 10000:
+        default_shap = 500
+        st.warning("⚠️ Large test set detected. Using 500 samples for SHAP by default to prevent timeout.")
+    else:
+        default_shap = min(1000, len(X_test_s))
+    
+    max_rows = st.slider(
+        "Number of test samples for SHAP analysis",
+        100,
+        min(2000, len(X_test_s)),  # Cap at 2000 to prevent hanging
+        default_shap,
+        100
+    )
+    
+    if max_rows > 1500:
+        st.warning("⚠️ Computing SHAP for >1500 samples may take several minutes...")
+
     explainer, _ = _shap_setup(
         art["xgb_model"],
         art["X_train_scaled"],
         art["feature_names"]
     )
 
-    X_test_s = art["X_test_scaled"]
-    max_rows = st.slider(
-        "Number of test samples for SHAP analysis",
-        100,
-        min(5000, len(X_test_s)),
-        1000,
-        100
-    )
-
     idx = np.arange(len(X_test_s))[:max_rows]
 
-    with st.spinner("Computing SHAP values... This may take a moment."):
-        shap_vals = compute_shap_values(explainer, X_test_s[idx])
+    with st.spinner(f"Computing SHAP values for {max_rows} samples... This may take a moment."):
+        try:
+            shap_vals = compute_shap_values(explainer, X_test_s[idx])
+        except Exception as e:
+            st.error(f"❌ SHAP computation failed: {str(e)}")
+            st.error("Try reducing the number of samples or skip SHAP analysis.")
+            shap_vals = None
 
-    col_shap1, col_shap2 = st.columns(2)
+    if shap_vals is not None:
+        col_shap1, col_shap2 = st.columns(2)
 
-    with col_shap1:
-        st.subheader("Feature Importance (Bar)")
-        fig_bar = plot_shap_bar(shap_vals, X_test_s[idx], art["feature_names"])
-        st.pyplot(fig_bar)
+        with col_shap1:
+            st.subheader("Feature Importance (Bar)")
+            fig_bar = plot_shap_bar(shap_vals, X_test_s[idx], art["feature_names"])
+            st.pyplot(fig_bar)
 
-    with col_shap2:
-        st.subheader("Feature Impact (Beeswarm)")
-        fig_bee = plot_shap_beeswarm(shap_vals, X_test_s[idx], art["feature_names"])
-        st.pyplot(fig_bee)
+        with col_shap2:
+            st.subheader("Feature Impact (Beeswarm)")
+            fig_bee = plot_shap_beeswarm(shap_vals, X_test_s[idx], art["feature_names"])
+            st.pyplot(fig_bee)
+    else:
+        st.info("⚠️ SHAP analysis skipped due to errors. Other features still available.")
 
     st.markdown("---")
 
