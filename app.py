@@ -344,7 +344,7 @@ if run_btn:
         progress_bar.progress(40)
         
         pipe, art = _run_pipeline(
-            path, test_size, xgb_threshold, ocsvm_nu, ocsvm_sample, linear
+            path, test_size, xgb_threshold, ocsvm_nu, ocsvm_sample, use_linear
         )
         
         status_text.text("🔄 Step 3/5: Generating predictions...")
