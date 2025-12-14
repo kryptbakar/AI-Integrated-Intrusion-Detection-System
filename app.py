@@ -13,6 +13,7 @@ from utils import (
     threshold_sweep, plot_confusion_matrix, plot_roc_curve,
     plot_pr_curve, plot_threshold_sweep
 )
+from gdrive_downloader import download_and_cache_dataset
 
 # Page config
 st.set_page_config(
@@ -103,16 +104,48 @@ st.markdown('''
 st.sidebar.header("⚙️ Configuration")
 st.sidebar.markdown("---")
 
+# Option 1: Upload file
 uploaded = st.sidebar.file_uploader(
-    "📁 Upload CSV Dataset",
+    "📁 Option 1: Upload CSV (max 200MB)",
     type=["csv"],
-    help="Must contain a 'Label' column"
+    help="For smaller files"
 )
+
+st.sidebar.markdown("**OR**")
+
+# Option 2: Google Drive link
+use_gdrive = st.sidebar.checkbox("📥 Use Google Drive (700MB OK!)", value=False)
+
+gdrive_url = None
+if use_gdrive:
+    gdrive_url = st.sidebar.text_input(
+        "Paste Google Drive link",
+        placeholder="https://drive.google.com/file/d/...",
+        help="Share link from Google Drive"
+    )
+    
+    with st.sidebar.expander("❓ How to get link"):
+        st.markdown("""
+        1. Upload to Google Drive
+        2. Right-click → Share
+        3. "Anyone with link" → Copy
+        4. Paste here ☝️
+        """)
+
+st.sidebar.markdown("**OR**")
+
+# Option 3: Local path
 default_path = st.sidebar.text_input(
-    "Or use local path",
+    "📂 Option 3: Local path",
     value="merged_output.csv",
-    help="Path to CSV file on disk"
+    help="Path to local CSV file"
 )
+
+# Show current working directory for debugging
+with st.sidebar.expander("🔍 Debug Info"):
+    import os
+    st.code(f"Current directory: {os.getcwd()}")
+    st.code(f"Files in directory: {os.listdir('.')[:10]}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Model Parameters")
@@ -205,21 +238,90 @@ if not run_btn:
 
 # Main execution
 if run_btn:
-    # Determine data path
+    import os
+    
+    # Determine data path - Priority: Upload > Google Drive > Local Path
+    path = None
+    
     if uploaded:
+        # Option 1: File uploaded via sidebar
         path = _persist_upload_to_tmp(uploaded.read())
         st.success(f"✓ Uploaded file: {uploaded.name}")
+        
+    elif use_gdrive and gdrive_url:
+        # Option 2: Download from Google Drive
+        path = download_and_cache_dataset(gdrive_url)
+        if not path:
+            st.error("❌ Failed to download from Google Drive")
+            st.info("💡 Try uploading the file directly or use a local path")
+            st.stop()
+            
     else:
+        # Option 3: Local file path
         path = default_path
-        st.info(f"Using local file: {path}")
+        
+        # Convert Windows backslashes to forward slashes
+        path = path.replace('\\', '/')
+        
+        # Try to resolve relative paths
+        if not os.path.isabs(path):
+            # Try in current directory
+            if os.path.exists(path):
+                path = os.path.abspath(path)
+            # Try in parent directory
+            elif os.path.exists(os.path.join('..', path)):
+                path = os.path.abspath(os.path.join('..', path))
+            # Try common data directories
+            elif os.path.exists(os.path.join('data', path)):
+                path = os.path.abspath(os.path.join('data', path))
+        
+        st.info(f"📂 Using path: `{path}`")
     
     # Check if file exists
-    import os
     if not os.path.exists(path):
-        st.error(f"❌ Error: File not found at path: `{path}`")
-        st.error("Please either:")
-        st.markdown("1. Upload a CSV file using the sidebar uploader, OR")
-        st.markdown("2. Ensure `merged_output.csv` exists in the app directory")
+        st.error(f"❌ Error: File not found!")
+        st.error(f"**Tried path:** `{path}`")
+        st.error("")
+        st.markdown("### 💡 How to fix:")
+        st.markdown("**Option 1:** Check the **📥 Use Google Drive** box and paste your Google Drive link")
+        st.markdown("**Option 2:** Upload your CSV file using the file uploader")
+        st.markdown("**Option 3:** Put file in same folder as app.py:")
+        st.code("merged_output.csv")
+        
+        with st.expander("📋 Google Drive Setup Instructions"):
+            st.markdown("""
+            ### How to use Google Drive for 700MB file:
+            
+            1. **Upload to Google Drive:**
+               - Go to drive.google.com
+               - Upload your `merged_output.csv` (700MB)
+            
+            2. **Get shareable link:**
+               - Right-click the file
+               - Click "Share"
+               - Set to "Anyone with the link" can view
+               - Click "Copy link"
+            
+            3. **Paste in Streamlit:**
+               - Check "📥 Use Google Drive" box
+               - Paste the link
+               - Click "🚀 Run Pipeline"
+            
+            **First download takes 1-2 min, then cached!**
+            """)
+        
+        with st.expander("🔍 Current Directory Info"):
+            st.code(f"Current working directory:\n{os.getcwd()}")
+            st.code("Files in current directory:")
+            try:
+                files = [f for f in os.listdir('.') if f.endswith('.csv')]
+                if files:
+                    st.code('\n'.join(files))
+                else:
+                    st.code("No CSV files found in current directory")
+            except Exception as e:
+                st.code(f"Error listing files: {e}")
+        
         st.stop()
     
     # Check file size
