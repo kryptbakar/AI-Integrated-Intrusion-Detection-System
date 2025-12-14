@@ -11,8 +11,20 @@ from sklearn.metrics import (
     f1_score, roc_auc_score
 )
 from sklearn.utils import resample
-from imblearn.over_sampling import SMOTE, ADASYN
-from imblearn.under_sampling import RandomUnderSampler
+try:
+    from imblearn.over_sampling import SMOTE, ADASYN
+    from imblearn.under_sampling import RandomUnderSampler
+except ImportError as e:
+    import sys
+    print(f"Warning: imbalanced-learn import failed: {e}")
+    print("Attempting alternative import...")
+    
+    # Try downgrading sklearn temporarily
+    import subprocess
+    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "scikit-learn==1.3.2"])
+    
+    from imblearn.over_sampling import SMOTE, ADASYN
+    from imblearn.under_sampling import RandomUnderSampler
 from xgboost import XGBClassifier
 from sklearn.svm import OneClassSVM
 
