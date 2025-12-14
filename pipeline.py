@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time
 import warnings
+import sys
 from typing import Dict, Tuple, Optional, Any
 
 import numpy as np
@@ -11,20 +12,25 @@ from sklearn.metrics import (
     f1_score, roc_auc_score
 )
 from sklearn.utils import resample
+
+# Handle imbalanced-learn imports with Python 3.13 compatibility
 try:
     from imblearn.over_sampling import SMOTE, ADASYN
     from imblearn.under_sampling import RandomUnderSampler
+    IMBLEARN_AVAILABLE = True
 except ImportError as e:
-    import sys
-    print(f"Warning: imbalanced-learn import failed: {e}")
-    print("Attempting alternative import...")
+    IMBLEARN_AVAILABLE = False
+    print(f"⚠️  Warning: imbalanced-learn not available: {e}")
+    print("⚠️  Balancing will use alternative methods")
     
-    # Try downgrading sklearn temporarily
-    import subprocess
-    subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "scikit-learn==1.3.2"])
-    
-    from imblearn.over_sampling import SMOTE, ADASYN
-    from imblearn.under_sampling import RandomUnderSampler
+    # Define dummy classes for type hints
+    class SMOTE:
+        pass
+    class ADASYN:
+        pass
+    class RandomUnderSampler:
+        pass
+
 from xgboost import XGBClassifier
 from sklearn.svm import OneClassSVM
 
@@ -99,7 +105,7 @@ class OptimizedVotingHybridPipeline:
         test_size: float = 0.3
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         '''Strict temporal split - NO SHUFFLING'''
-        print("\n" + "="*70)
+        print("" + "="*70)
         print("TEMPORAL SPLIT - CHRONOLOGICAL (NO SHUFFLING)")
         print("="*70)
 
@@ -109,7 +115,7 @@ class OptimizedVotingHybridPipeline:
         train_df = df.iloc[:split_idx].copy()
         test_df = df.iloc[split_idx:].copy()
 
-        print(f"\nTrain: {len(train_df):,} samples")
+        print(f"Train: {len(train_df):,} samples")
         print(f"Test:  {len(test_df):,} samples")
 
         return train_df, test_df
@@ -166,6 +172,10 @@ class OptimizedVotingHybridPipeline:
         print("AGGRESSIVE BALANCING (For XGBoost)")
         print("="*70)
 
+        if not IMBLEARN_AVAILABLE:
+            print("⚠️  imbalanced-learn not available - using simple oversampling")
+            return self._simple_balance(X_train, y_train)
+
         y = pd.Series(y_train)
         n_neg = int((y == 0).sum())
         n_pos = int((y == 1).sum())
@@ -198,6 +208,47 @@ class OptimizedVotingHybridPipeline:
             X_bal, y_bal = X_sm, y_sm
 
         return X_bal, y_bal
+    
+    def _simple_balance(
+        self,
+        X_train: np.ndarray,
+        y_train: pd.Series
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        '''Simple oversampling fallback when imblearn not available'''
+        y = pd.Series(y_train) if not isinstance(y_train, pd.Series) else y_train
+        
+        # Separate classes
+        mask_neg = y == 0
+        mask_pos = y == 1
+        
+        X_neg = X_train[mask_neg]
+        X_pos = X_train[mask_pos]
+        y_neg = y[mask_neg]
+        y_pos = y[mask_pos]
+        
+        n_neg = len(X_neg)
+        n_pos = len(X_pos)
+        
+        print(f"Original: Negative={n_neg:,}, Positive={n_pos:,}")
+        
+        # Oversample minority class (positive/attack) with replacement
+        if n_pos < n_neg:
+            X_pos_resampled = resample(
+                X_pos,
+                n_samples=n_neg,
+                random_state=42,
+                replace=True
+            )
+            y_pos_resampled = pd.Series([1] * n_neg)
+            
+            X_balanced = np.vstack([X_neg, X_pos_resampled])
+            y_balanced = pd.concat([y_neg, y_pos_resampled], ignore_index=True).values
+        else:
+            X_balanced = X_train
+            y_balanced = y.values
+        
+        print(f"After simple oversampling: {pd.Series(y_balanced).value_counts().to_dict()}")
+        return X_balanced, y_balanced
 
     def build_xgboost(
         self,
@@ -395,7 +446,7 @@ class OptimizedVotingHybridPipeline:
             y_test, y_vote, p_vote, total_t
         )
 
-        print("\n✅ PIPELINE COMPLETED")
+        print("✅ PIPELINE COMPLETED")
 
         # Return comprehensive artifacts
         return {

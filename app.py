@@ -329,8 +329,13 @@ if run_btn:
     st.info(f"📊 Dataset size: {file_size_mb:.2f} MB")
     
     if file_size_mb > 500:
-        st.warning("⚠️ Large dataset detected! Processing may take 10-20 minutes.")
-        st.warning("Consider using a smaller sample for initial testing.")
+        st.warning("⚠️ **Large dataset detected!**")
+        st.warning(f"**File size: {file_size_mb:.2f} MB**")
+        st.info("🔧 **Memory optimization:**")
+        st.info("- Full dataset will be used for XGBoost (accurate metrics)")
+        st.info("- OCSVM will sample 30% of benign data (faster training)")
+        st.info("- Processing may take 15-20 minutes on first run")
+        st.info("💡 This is normal for large datasets - results will be cached!")
 
     # Run pipeline with better progress tracking
     progress_bar = st.progress(0)
