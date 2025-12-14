@@ -56,6 +56,7 @@ def download_from_google_drive(
 ) -> bool:
     """
     Download file from Google Drive with progress tracking
+    Handles large files with virus scan confirmation
     
     Args:
         file_id: Google Drive file ID
@@ -67,30 +68,71 @@ def download_from_google_drive(
     """
     
     # Google Drive download URL
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    base_url = "https://drive.google.com/uc?export=download"
     
     try:
         # Start session
         session = requests.Session()
-        response = session.get(url, stream=True)
         
-        # Handle confirmation token for large files
+        # First request to get confirmation token for large files
+        response = session.get(base_url, params={'id': file_id}, stream=True)
+        
+        # Check for download warning (large files)
         token = None
         for key, value in response.cookies.items():
             if key.startswith('download_warning'):
                 token = value
                 break
         
+        # If we got a token, make confirmed request
         if token:
             params = {'id': file_id, 'confirm': token}
-            response = session.get(url, params=params, stream=True)
+            response = session.get(base_url, params=params, stream=True)
         
-        # Check if successful
+        # Alternative: Try to extract confirm code from HTML
+        if response.status_code == 200 and 'text/html' in response.headers.get('content-type', ''):
+            # Large file - need to extract confirmation code
+            content = response.text
+            
+            # Look for confirmation link
+            import re
+            match = re.search(r'confirm=([0-9A-Za-z_]+)', content)
+            if match:
+                confirm_code = match.group(1)
+                params = {'id': file_id, 'confirm': confirm_code}
+                response = session.get(base_url, params=params, stream=True)
+            else:
+                # Try alternative URL format
+                response = session.get(
+                    f"https://drive.google.com/u/0/uc?id={file_id}&export=download&confirm=t",
+                    stream=True
+                )
+        
+        # Check if we got a valid response
         if response.status_code != 200:
+            st.error(f"Download failed with status code: {response.status_code}")
             return False
+        
+        # Check if we're getting HTML instead of file (common with large files)
+        content_type = response.headers.get('content-type', '')
+        if 'text/html' in content_type and show_progress:
+            st.warning("⚠️ Google Drive virus scan warning detected. Retrying with confirmation...")
+            
+            # Try direct download URL for large files
+            response = session.get(
+                f"https://drive.google.com/uc?id={file_id}&export=download&confirm=t&uuid=" + 
+                str(int(time.time())),
+                stream=True,
+                allow_redirects=True
+            )
         
         # Get file size
         total_size = int(response.headers.get('content-length', 0))
+        
+        if total_size == 0:
+            st.error("❌ Failed to get file size. The link might be invalid or file is not shared properly.")
+            st.error("Make sure the Google Drive link is set to 'Anyone with the link can VIEW'")
+            return False
         
         # Progress tracking
         if show_progress and total_size > 0:
@@ -113,7 +155,7 @@ def download_from_google_drive(
                     # Update progress
                     if show_progress and total_size > 0:
                         progress = downloaded / total_size
-                        progress_bar.progress(progress)
+                        progress_bar.progress(min(progress, 1.0))
                         
                         # Calculate speed
                         elapsed = time.time() - start_time
@@ -125,6 +167,12 @@ def download_from_google_drive(
                                 f"({speed_mbps:.1f} MB/s)"
                             )
         
+        # Verify download
+        actual_size = os.path.getsize(destination)
+        if actual_size == 0:
+            st.error("❌ Downloaded file is empty (0 bytes)")
+            return False
+        
         # Clean up progress indicators
         if show_progress:
             progress_bar.empty()
@@ -133,7 +181,9 @@ def download_from_google_drive(
         return True
         
     except Exception as e:
-        st.error(f"Download failed: {str(e)}")
+        st.error(f"Download error: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return False
 
 
@@ -158,7 +208,11 @@ def download_and_cache_dataset(
     
     if not file_id:
         st.error("❌ Invalid Google Drive URL or file ID")
+        st.error(f"Received: {google_drive_url}")
+        st.info("💡 Expected format: https://drive.google.com/file/d/FILE_ID/view")
         return None
+    
+    st.info(f"🔍 Extracted File ID: {file_id}")
     
     # Create temp directory if it doesn't exist
     temp_dir = "/tmp"
@@ -167,24 +221,61 @@ def download_and_cache_dataset(
     
     destination = os.path.join(temp_dir, filename)
     
-    # Check if already exists
+    # Check if already exists and is valid
     if os.path.exists(destination):
         file_size_mb = os.path.getsize(destination) / (1024 * 1024)
-        st.success(f"✅ Using cached dataset ({file_size_mb:.1f} MB)")
-        return destination
+        if file_size_mb > 1:  # Only use cached if > 1MB (valid file)
+            st.success(f"✅ Using cached dataset ({file_size_mb:.1f} MB)")
+            return destination
+        else:
+            # Remove invalid cached file
+            os.remove(destination)
+            st.warning(f"⚠️ Removed invalid cached file ({file_size_mb:.3f} MB)")
     
     # Download the file
     st.info("📥 Downloading dataset from Google Drive...")
     st.warning("⏳ First download may take 1-2 minutes. Subsequent loads will be instant!")
     
+    # Show the direct download link for debugging
+    with st.expander("🔍 Debug Info"):
+        st.code(f"File ID: {file_id}")
+        st.code(f"Destination: {destination}")
+        st.code(f"Direct link: https://drive.google.com/uc?export=download&id={file_id}")
+    
     success = download_from_google_drive(file_id, destination, show_progress=True)
     
     if success and os.path.exists(destination):
         file_size_mb = os.path.getsize(destination) / (1024 * 1024)
+        
+        if file_size_mb < 1:
+            st.error(f"❌ Download produced invalid file ({file_size_mb:.3f} MB)")
+            st.error("This usually means:")
+            st.error("1. The Google Drive link is not shared as 'Anyone with the link'")
+            st.error("2. The file is too large and requires confirmation")
+            st.error("3. The file ID is incorrect")
+            
+            # Remove the invalid file
+            if os.path.exists(destination):
+                os.remove(destination)
+            
+            return None
+        
         st.success(f"✅ Dataset downloaded successfully! ({file_size_mb:.1f} MB)")
         return destination
     else:
-        st.error("❌ Download failed. Please check your Google Drive link.")
+        st.error("❌ Download failed. Please check:")
+        st.error("1. Is the Google Drive link shared as 'Anyone with the link can VIEW'?")
+        st.error("2. Is the file ID correct?")
+        st.error("3. Is your internet connection stable?")
+        
+        with st.expander("📋 How to verify your Google Drive link"):
+            st.markdown("""
+            1. Open the Google Drive link in an **incognito/private browser window**
+            2. It should show the file preview without asking you to sign in
+            3. If it asks to "Request access" → your link is NOT properly shared
+            4. Fix: Right-click file → Share → "Anyone with the link" can VIEW
+            """)
+        
         return None
 
 
