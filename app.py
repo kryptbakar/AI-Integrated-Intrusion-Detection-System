@@ -288,6 +288,43 @@ def predict_single_sample(models, features):
         'voting_proba': voting_proba
     }
 
+
+def generate_biased_random_sample(models, feature_names, feature_distributions, force_class, max_tries: int = 30):
+    """
+    Generate a random feature vector that is biased toward a desired class
+    according to the *model's own* predictions.
+
+    force_class: None | "benign" | "attack"
+    """
+    # Map to model label
+    target_label = None
+    if force_class == "benign":
+        target_label = 0
+    elif force_class == "attack":
+        target_label = 1
+
+    # If we don't have distributions or no explicit target, just do a single draw
+    if feature_distributions is None or target_label is None:
+        return [
+            smart_default(feat, feature_distributions, force_class)
+            for feat in feature_names
+        ]
+
+    best_sample = None
+
+    for _ in range(max_tries):
+        sample = [
+            smart_default(feat, feature_distributions, force_class)
+            for feat in feature_names
+        ]
+        pred = predict_single_sample(models, sample)
+        if pred["voting_pred"] == target_label:
+            return sample
+        best_sample = sample
+
+    # Fallback: return the last sample even if it didn't match the target
+    return best_sample
+
 # Main app
 st.title("🛡️ IDS Inference Dashboard")
 st.markdown("**Pre-trained Hybrid Model: CatBoost + LOF**")
@@ -408,6 +445,8 @@ elif mode == "🎯 Live Prediction":
     
     feature_names = models['feature_names']
     n_features = len(feature_names)
+    # Precomputed random sample (if any)
+    precomputed_sample = st.session_state.get("random_values")
     # --- Random sample controls ---
     colA, colB = st.columns(2)
 
@@ -421,21 +460,37 @@ elif mode == "🎯 Live Prediction":
         )
 
     if random_sample:
-        st.session_state.random_sample = True
-        st.session_state.force_class = (
-            None if force_class == "Balanced" else force_class.lower()
+        # Clear previous cached values
+        if "random_values" in st.session_state:
+            del st.session_state["random_values"]
+
+        # Normalize force_class
+        selected = None if force_class == "Balanced" else force_class.lower()
+        st.session_state.force_class = selected
+
+        # Generate a model-aware biased sample when possible
+        sample = generate_biased_random_sample(
+            models,
+            feature_names,
+            feature_distributions,
+            selected,
         )
+        st.session_state.random_values = sample
+        st.session_state.random_sample = True
 
     
     st.markdown("**Quick Input (Top 10 Features):**")
     
     input_values = []
+    idx = 0  # global feature index across visible + hidden
     col1, col2 = st.columns(2)
 
     # --- Top 10 visible features ---
     for i, feature in enumerate(feature_names[:10]):
         with col1 if i % 2 == 0 else col2:
-            if getattr(st.session_state, "random_sample", False) and feature_distributions:
+            if precomputed_sample is not None and idx < len(precomputed_sample):
+                default = precomputed_sample[idx]
+            elif getattr(st.session_state, "random_sample", False) and feature_distributions:
                 default = smart_default(
                     feature,
                     feature_distributions,
@@ -451,10 +506,13 @@ elif mode == "🎯 Live Prediction":
                 key=f"feat_{i}"
             )
             input_values.append(val)
+            idx += 1
 
     # --- Remaining hidden features ---
-    for feature in feature_names[10:]:
-        if getattr(st.session_state, "random_sample", False) and feature_distributions:
+    for j, feature in enumerate(feature_names[10:], start=10):
+        if precomputed_sample is not None and idx < len(precomputed_sample):
+            val = precomputed_sample[idx]
+        elif getattr(st.session_state, "random_sample", False) and feature_distributions:
             val = smart_default(
                 feature,
                 feature_distributions,
@@ -464,6 +522,7 @@ elif mode == "🎯 Live Prediction":
             val = 0.0
 
         input_values.append(val)
+        idx += 1
 
     st.markdown("---")
     
