@@ -1,6 +1,6 @@
 """
-Streamlit App with Google Drive Download (No gdown dependency)
-Uses requests library for Google Drive downloads
+Streamlit App with Google Drive Auto-Download
+Supports large model files (300MB+) via Google Drive
 """
 
 from __future__ import annotations
@@ -9,9 +9,10 @@ import pickle
 import json
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 import os
-import requests
-from io import BytesIO
+import gdown
 
 # Page config
 st.set_page_config(
@@ -30,187 +31,155 @@ st.markdown('''
     </style>
 ''', unsafe_allow_html=True)
 
-def download_from_google_drive(file_id, destination):
-    URL = "https://docs.google.com/uc?export=download"
+# Configuration - Set your Google Drive file ID here
+GDRIVE_FILE_ID = None  # Set this after uploading to Google Drive
+GDRIVE_URL = None      # Or set direct URL
 
-    session = requests.Session()
-
-    response = session.get(URL, params={"id": file_id, "confirm": "t"}, stream=True)
-
-    # ❌ Google returned HTML instead of file
-    content_type = response.headers.get("Content-Type", "")
-    if "text/html" in content_type:
-        raise RuntimeError("Google Drive returned HTML instead of file. Check sharing or quota.")
-
-    CHUNK_SIZE = 32768
-    with open(destination, "wb") as f:
-        for chunk in response.iter_content(CHUNK_SIZE):
-            if chunk:
-                f.write(chunk)
-
-
-def extract_file_id(url):
-    """Extract file ID from Google Drive URL"""
-    if '/d/' in url:
-        return url.split('/d/')[1].split('/')[0]
-    elif 'id=' in url:
-        return url.split('id=')[1].split('&')[0]
+@st.cache_resource
+def download_from_gdrive(file_id=None, url=None):
+    """Download model file from Google Drive"""
+    if file_id:
+        download_url = f"https://drive.google.com/uc?id={file_id}"
+    elif url:
+        download_url = url
     else:
-        return url
+        return None
+    
+    output = 'trained_models.pkl'
+    
+    try:
+        with st.spinner(f"📥 Downloading model from Google Drive... (300MB)"):
+            gdown.download(download_url, output, quiet=False, fuzzy=True)
+        
+        if os.path.exists(output) and os.path.getsize(output) > 1000000:  # >1MB
+            st.success(f"✅ Downloaded {os.path.getsize(output) / 1024 / 1024:.1f} MB")
+            return output
+        else:
+            st.error("❌ Download failed or file too small")
+            return None
+    except Exception as e:
+        st.error(f"❌ Download error: {str(e)}")
+        return None
 
 @st.cache_resource
 def load_models():
-    """Load pre-trained models"""
+    """Load pre-trained models - with multiple loading options"""
     
-    # Check if file exists locally
+    # Option 1: Check if file exists locally
     if os.path.exists('trained_models.pkl'):
         try:
             with open('trained_models.pkl', 'rb') as f:
                 models = pickle.load(f)
-            st.sidebar.success("✅ Models loaded")
+            st.sidebar.success("✅ Models loaded from local file")
             return models
         except Exception as e:
-            st.error(f"❌ Error loading: {str(e)}")
-            if st.button("🗑️ Delete and try again"):
+            st.error(f"❌ Error loading local file: {str(e)}")
+            if st.button("🗑️ Delete corrupted file"):
                 os.remove('trained_models.pkl')
                 st.rerun()
     
-    # Show upload interface
+    # Option 2: Try Google Drive if configured
+    if GDRIVE_FILE_ID or GDRIVE_URL:
+        st.info("📥 Downloading from Google Drive...")
+        downloaded = download_from_gdrive(GDRIVE_FILE_ID, GDRIVE_URL)
+        if downloaded:
+            st.rerun()  # Reload to load the downloaded file
+    
+    # Option 3: Show upload interface
     st.error("### ❌ Model file not found!")
     st.markdown("---")
     
-    # Tabs for different options
-    tab1, tab2 = st.tabs(["🔗 Google Drive Link", "📋 Instructions"])
+    # Tab interface for different options
+    tab1, tab2, tab3 = st.tabs(["📤 Upload File", "🔗 Google Drive Link", "📋 Instructions"])
     
     with tab1:
-        st.markdown("### 🔗 Download from Google Drive")
+        st.markdown("### 📤 Upload Model File")
+        st.warning("⚠️ Streamlit upload limit: 200MB. For 300MB files, use Google Drive (Tab 2)")
+        
+        uploaded_file = st.file_uploader(
+            "Upload trained_models.pkl (max 200MB)",
+            type=['pkl'],
+            help="For files >200MB, use Google Drive option"
+        )
+        
+        if uploaded_file is not None:
+            file_size = len(uploaded_file.getvalue()) / 1024 / 1024
+            st.info(f"File size: {file_size:.1f} MB")
+            
+            if file_size > 200:
+                st.error("❌ File too large! Use Google Drive option instead.")
+            else:
+                with st.spinner("Uploading..."):
+                    with open('trained_models.pkl', 'wb') as f:
+                        f.write(uploaded_file.getvalue())
+                st.success("✅ Uploaded! Reloading...")
+                st.rerun()
+    
+    with tab2:
+        st.markdown("### 🔗 Google Drive Link (For Large Files)")
         st.markdown("""
-        **Steps to get your link:**
+        **Steps:**
         1. Upload `trained_models.pkl` to Google Drive
         2. Right-click → Share → "Anyone with the link"
         3. Copy the link
-        4. Paste below and click Download
+        4. Paste below
         """)
-        
-        st.markdown("---")
         
         gdrive_link = st.text_input(
             "Google Drive Link:",
-            placeholder="https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing",
-            help="Paste your Google Drive shareable link here"
+            placeholder="https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing"
         )
         
-        col1, col2 = st.columns([1, 3])
-        
-        with col1:
-            download_btn = st.button("📥 Download", type="primary", use_container_width=True)
-        
-        if download_btn:
-            if not gdrive_link:
-                st.error("❌ Please enter a Google Drive link")
+        if st.button("📥 Download from Google Drive", type="primary"):
+            if gdrive_link:
+                # Extract file ID
+                if '/d/' in gdrive_link:
+                    file_id = gdrive_link.split('/d/')[1].split('/')[0]
+                elif 'id=' in gdrive_link:
+                    file_id = gdrive_link.split('id=')[1].split('&')[0]
+                else:
+                    file_id = gdrive_link
+                
+                downloaded = download_from_gdrive(file_id=file_id)
+                if downloaded:
+                    st.success("✅ Download complete!")
+                    st.rerun()
             else:
-                try:
-                    # Extract file ID
-                    file_id = extract_file_id(gdrive_link)
-                    st.info(f"File ID: {file_id}")
-                    
-                    # Download
-                    with st.spinner("📥 Downloading from Google Drive (300MB)... This may take 1-2 minutes"):
-                        download_from_google_drive(file_id, 'trained_models.pkl')
-                    
-                    # Check if downloaded
-                    if os.path.exists('trained_models.pkl'):
-                        file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
-                        if file_size > 1:  # At least 1MB
-                            st.success(f"✅ Downloaded {file_size:.1f} MB!")
-                            st.info("🔄 Reloading page...")
-                            st.rerun()
-                        else:
-                            st.error("❌ Download failed - file too small")
-                            os.remove('trained_models.pkl')
-                    else:
-                        st.error("❌ Download failed")
-                        
-                except Exception as e:
-                    st.error(f"❌ Download error: {str(e)}")
-                    st.info("**Troubleshooting:**")
-                    st.markdown("""
-                    - Make sure the link is set to "Anyone with the link"
-                    - Try copying the link again
-                    - Check if file ID is correct
-                    """)
-        
-        st.markdown("---")
-        st.markdown("**Example link format:**")
-        st.code("https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing")
+                st.error("Please enter a Google Drive link")
     
-    with tab2:
+    with tab3:
         st.markdown("""
-        ### 📋 How to Setup Google Drive Link
+        ### 📋 How to Train Models
         
-        **Step 1: Upload to Google Drive**
+        **On your local machine:**
+        
         ```bash
-        # After training locally:
+        # 1. Install dependencies
+        pip install pandas numpy scikit-learn catboost imbalanced-learn
+        
+        # 2. Run training (4-6 minutes)
         python train_catboost_lof.py
-        # Creates trained_models.pkl (300MB)
+        
+        # 3. This creates trained_models.pkl (300MB)
         ```
         
-        1. Go to [drive.google.com](https://drive.google.com)
-        2. Click "New" → "File upload"
-        3. Select `trained_models.pkl`
-        4. Wait for upload (2-3 minutes)
-        
-        **Step 2: Make Shareable**
-        1. Right-click on the uploaded file
-        2. Click "Share"
-        3. Change to **"Anyone with the link"**
-        4. Set permission to **"Viewer"**
-        5. Click "Copy link"
-        
-        **Step 3: Use in App**
-        1. Go to "🔗 Google Drive Link" tab
-        2. Paste the link
-        3. Click "📥 Download"
-        4. Wait 1-2 minutes
-        5. App reloads with models!
+        **Then choose:**
+        - **Tab 1 (Upload):** For files <200MB
+        - **Tab 2 (Google Drive):** For files >200MB ⭐ **Recommended**
         
         ---
         
-        ### ✅ Link Format Examples
+        ### 🔗 Permanent Google Drive Setup
         
-        **Full URL (works):**
-        ```
-        https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing
-        ```
+        **To avoid re-uploading every time:**
         
-        **Just File ID (works):**
-        ```
-        1AbCdEfGhIjKlMnOpQrStUvWxYz
-        ```
-        
-        **Open link (works):**
-        ```
-        https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz
-        ```
-        
-        ---
-        
-        ### ⚠️ Common Issues
-        
-        **"Download failed":**
-        - Link must be set to "Anyone with the link"
-        - Check if file is still in your Drive
-        - Try generating a new link
-        
-        **"File too small":**
-        - Google returned an error page instead of file
-        - Usually means sharing settings are wrong
-        - Re-share with "Anyone with the link"
-        
-        **Takes too long:**
-        - 300MB file takes 1-2 minutes
-        - Don't close the browser
-        - Streamlit Cloud has good bandwidth
+        1. Upload to Google Drive (one time)
+        2. Get shareable link
+        3. Set in code (line 29-30):
+           ```python
+           GDRIVE_FILE_ID = "your_file_id_here"
+           ```
+        4. Redeploy - auto-downloads on startup!
         """)
     
     st.stop()
@@ -240,7 +209,7 @@ def load_sample_predictions():
         return None
 
 def predict_single_sample(models, features):
-    """Make prediction - CatBoost + LOF"""
+    """Make prediction on single sample - CatBoost + LOF"""
     features_scaled = models['scaler'].transform([features])
     
     # CatBoost
@@ -270,8 +239,8 @@ def predict_single_sample(models, features):
 
 # Main app
 st.title("🛡️ IDS Inference Dashboard")
-st.markdown("**CatBoost + LOF Hybrid Model**")
-st.caption("Google Drive integration • No file size limits")
+st.markdown("**Pre-trained Hybrid Model: CatBoost + LOF**")
+st.caption("Supports large files via Google Drive • 2-3x faster training")
 st.markdown("---")
 
 # Load models
@@ -293,6 +262,7 @@ if metrics:
     st.sidebar.info(f"**Samples:** {metrics['dataset_info']['total_samples']:,}")
     st.sidebar.info(f"**Features:** {metrics['dataset_info']['features']}")
 
+# File info
 if os.path.exists('trained_models.pkl'):
     file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
     st.sidebar.success(f"📦 Model: {file_size:.1f} MB")
