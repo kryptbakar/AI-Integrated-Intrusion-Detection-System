@@ -234,6 +234,30 @@ def load_sample_predictions():
     except Exception as e:
         st.warning(f"Could not load sample predictions: {e}")
         return None
+def smart_default(feature, feature_distributions, force_class=None):
+    """
+    Generate realistic random values based on training distributions.
+    force_class: None | 'benign' | 'attack'
+    """
+    stats = feature_distributions.get(feature)
+    if not stats:
+        return 0.0
+
+    benign = stats["benign"]
+    attack = stats["attack"]
+
+    if force_class == "benign":
+        mu, sigma = benign["mean"], benign["std"]
+    elif force_class == "attack":
+        mu, sigma = attack["mean"], attack["std"]
+    else:
+        # Balanced: randomly choose
+        if np.random.rand() < 0.5:
+            mu, sigma = benign["mean"], benign["std"]
+        else:
+            mu, sigma = attack["mean"], attack["std"]
+
+    return float(np.random.normal(mu, sigma))
 
 def predict_single_sample(models, features):
     """Make prediction on single sample - CatBoost + LOF"""
@@ -270,10 +294,20 @@ st.markdown("**Pre-trained Hybrid Model: CatBoost + LOF**")
 st.caption("Supports large files via Google Drive • 2-3x faster training")
 st.markdown("---")
 
+@st.cache_data
+def load_feature_distributions():
+    if not os.path.exists("sample_predictions.json"):
+        return None
+    with open("sample_predictions.json", "r") as f:
+        data = json.load(f)
+    return data.get("feature_distributions")
+
 # Load models
 models = load_models()
 metrics = load_metrics()
 sample_preds = load_sample_predictions()
+
+feature_distributions = load_feature_distributions()
 
 # Sidebar
 st.sidebar.header("⚙️ Mode Selection")
@@ -334,20 +368,42 @@ elif mode == "🎯 Live Prediction":
     
     feature_names = models['feature_names']
     n_features = len(feature_names)
-    
-    if st.button("🎲 Generate Random Sample"):
+    # --- Random sample controls ---
+    colA, colB = st.columns(2)
+
+    with colA:
+        random_sample = st.button("🎲 Generate Random Sample")
+
+    with colB:
+        force_class = st.selectbox(
+            "Random Sample Bias",
+            ["Balanced", "Benign", "Attack"]
+        )
+
+    if random_sample:
         st.session_state.random_sample = True
+        st.session_state.force_class = (
+            None if force_class == "Balanced" else force_class.lower()
+        )
+
     
     st.markdown("**Quick Input (Top 10 Features):**")
     
     input_values = []
     col1, col2 = st.columns(2)
-    
-    random_sample = getattr(st.session_state, "random_sample", False)
 
+    # --- Top 10 visible features ---
     for i, feature in enumerate(feature_names[:10]):
         with col1 if i % 2 == 0 else col2:
-            default = smart_default(feature) if random_sample else 0.0
+            if getattr(st.session_state, "random_sample", False) and feature_distributions:
+                default = smart_default(
+                    feature,
+                    feature_distributions,
+                    getattr(st.session_state, "force_class", None)
+                )
+            else:
+                default = 0.0
+
             val = st.number_input(
                 feature,
                 value=float(default),
@@ -355,6 +411,20 @@ elif mode == "🎯 Live Prediction":
                 key=f"feat_{i}"
             )
             input_values.append(val)
+
+    # --- Remaining hidden features ---
+    for feature in feature_names[10:]:
+        if getattr(st.session_state, "random_sample", False) and feature_distributions:
+            val = smart_default(
+                feature,
+                feature_distributions,
+                getattr(st.session_state, "force_class", None)
+            )
+        else:
+            val = 0.0
+
+        input_values.append(val)
+
 
     
     for feature in feature_names[10:]:
