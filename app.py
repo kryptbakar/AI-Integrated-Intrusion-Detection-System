@@ -425,14 +425,6 @@ elif mode == "🎯 Live Prediction":
 
         input_values.append(val)
 
-
-    
-    for feature in feature_names[10:]:
-        input_values.append(
-        smart_default(feature) if random_sample else 0.0
-    )
-
-    
     st.markdown("---")
     
     if st.button("🚀 Predict", type="primary"):
