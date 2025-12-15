@@ -296,11 +296,51 @@ st.markdown("---")
 
 @st.cache_data
 def load_feature_distributions():
-    if not os.path.exists("sample_predictions.json"):
-        return None
-    with open("sample_predictions.json", "r") as f:
-        data = json.load(f)
-    return data.get("feature_distributions")
+    """
+    Load per-feature distributions used for random sample generation.
+    
+    Priority:
+    1) Use `feature_stats.json` (means/stds for each feature) – always present in this repo.
+    2) Fallback to any legacy `feature_distributions` entry inside `sample_predictions.json`.
+    """
+    # 1) Preferred: feature_stats.json
+    feature_stats_path = "feature_stats.json"
+    if os.path.exists(feature_stats_path):
+        try:
+            with open(feature_stats_path, "r") as f:
+                stats = json.load(f)
+        except Exception:
+            stats = None
+        if isinstance(stats, dict):
+            means = stats.get("means", {})
+            stds = stats.get("stds", {})
+            feature_distributions = {}
+            for feat, mu in means.items():
+                sigma = stds.get(feat, 1.0) or 1.0
+                # We don't have separate benign/attack stats here, so we reuse
+                # the same distribution for both – this keeps the existing
+                # smart_default() interface and UI bias options working.
+                feature_distributions[feat] = {
+                    "benign": {"mean": mu, "std": sigma},
+                    "attack": {"mean": mu, "std": sigma},
+                }
+            if feature_distributions:
+                return feature_distributions
+
+    # 2) Legacy fallback: look inside sample_predictions.json
+    if os.path.exists("sample_predictions.json"):
+        try:
+            with open("sample_predictions.json", "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                legacy = data.get("feature_distributions")
+                if legacy:
+                    return legacy
+        except Exception:
+            pass
+
+    # If nothing found, let callers handle the None case (falls back to zeros)
+    return None
 
 # Load models
 models = load_models()
