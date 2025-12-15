@@ -1,0 +1,29 @@
+{
+  "results": {
+    "model_name": "CatBoost + LOF Voting Hybrid",
+    "accuracy": 0.8109693907117442,
+    "precision": 0.7392433118225675,
+    "recall": 0.747154413627153,
+    "f1_score": 0.7431778099707115,
+    "roc_auc": 0.8097594770087958,
+    "fpr": 0.15218156388833026,
+    "fnr": 0.252845586372847,
+    "true_negatives": 370985,
+    "false_positives": 66591,
+    "false_negatives": 63887,
+    "true_positives": 188785,
+    "training_time": 452.3092243671417
+  },
+  "training_date": "2025-12-15T22:36:00.590677",
+  "model_type": "CatBoost+LOF",
+  "dataset_info": {
+    "total_samples": 2300825,
+    "train_samples": 1610577,
+    "test_samples": 690248,
+    "features": 78,
+    "class_distribution": {
+      "0": 1743179,
+      "1": 557646
+    }
+  }
+}

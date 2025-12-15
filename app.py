@@ -1,7 +1,6 @@
 """
-Lightweight Streamlit App - Inference Only
-Loads pre-trained models and shows metrics/predictions
-NO TRAINING - runs entirely on pre-computed results
+Streamlit App with Google Drive Auto-Download
+Supports large model files (300MB+) via Google Drive
 """
 
 from __future__ import annotations
@@ -12,7 +11,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, roc_curve, precision_recall_curve, auc
+import os
+import gdown
 
 # Page config
 st.set_page_config(
@@ -31,82 +31,162 @@ st.markdown('''
     </style>
 ''', unsafe_allow_html=True)
 
-# Load pre-trained models and data
+# Configuration - Set your Google Drive file ID here
+GDRIVE_FILE_ID = None  # Set this after uploading to Google Drive
+GDRIVE_URL = None      # Or set direct URL
+
 @st.cache_resource
-def load_models():
-    """Load pre-trained models"""
-    import os
+def download_from_gdrive(file_id=None, url=None):
+    """Download model file from Google Drive"""
+    if file_id:
+        download_url = f"https://drive.google.com/uc?id={file_id}"
+    elif url:
+        download_url = url
+    else:
+        return None
     
-    # Check if file exists
-    if not os.path.exists('trained_models.pkl'):
-        st.error("### ❌ trained_models.pkl not found!")
-        st.error("")
-        st.error("**This app requires pre-trained models.**")
-        st.info("### 📋 Setup Instructions:")
-        
-        with st.expander("🔧 Step-by-step setup", expanded=True):
-            st.markdown("""
-            ### Option 1: Train Models Locally (Recommended)
-            
-            **On your local machine:**
-            
-            1. Download these files from the repo:
-               - `train_local.py`
-               - `pipeline.py`
-               - `utils.py`
-               - Your dataset: `merged_output.csv`
-            
-            2. Run training:
-               ```bash
-               pip install pandas numpy scikit-learn imbalanced-learn xgboost
-               python train_local.py
-               ```
-            
-            3. Wait 10-15 minutes. This creates:
-               - ✅ `trained_models.pkl`
-               - ✅ `metrics.json`
-               - ✅ `sample_predictions.json`
-               - ✅ `feature_stats.json`
-            
-            4. Upload these 4 files to your GitHub repo
-            
-            5. Redeploy this app!
-            
-            ---
-            
-            ### Option 2: Use Pre-trained Models (Quick Test)
-            
-            If you already have trained models:
-            1. Make sure `trained_models.pkl` is in your repo
-            2. Check file size (should be 50-100MB)
-            3. Redeploy the app
-            
-            ---
-            
-            ### Option 3: Use Google Drive (Large Files)
-            
-            If file is too large for GitHub:
-            1. Upload `trained_models.pkl` to Google Drive
-            2. Get shareable link
-            3. Add download code (we can help with this)
-            """)
-        
-        st.stop()
+    output = 'trained_models.pkl'
     
     try:
-        with open('trained_models.pkl', 'rb') as f:
-            models = pickle.load(f)
-        return models
+        with st.spinner(f"📥 Downloading model from Google Drive... (300MB)"):
+            gdown.download(download_url, output, quiet=False, fuzzy=True)
+        
+        if os.path.exists(output) and os.path.getsize(output) > 1000000:  # >1MB
+            st.success(f"✅ Downloaded {os.path.getsize(output) / 1024 / 1024:.1f} MB")
+            return output
+        else:
+            st.error("❌ Download failed or file too small")
+            return None
     except Exception as e:
-        st.error(f"### ❌ Error loading models: {str(e)}")
-        st.error("The model file might be corrupted or incompatible.")
-        st.info("Try retraining with `train_local.py` and re-uploading.")
-        st.stop()
+        st.error(f"❌ Download error: {str(e)}")
+        return None
+
+@st.cache_resource
+def load_models():
+    """Load pre-trained models - with multiple loading options"""
+    
+    # Option 1: Check if file exists locally
+    if os.path.exists('trained_models.pkl'):
+        try:
+            with open('trained_models.pkl', 'rb') as f:
+                models = pickle.load(f)
+            st.sidebar.success("✅ Models loaded from local file")
+            return models
+        except Exception as e:
+            st.error(f"❌ Error loading local file: {str(e)}")
+            if st.button("🗑️ Delete corrupted file"):
+                os.remove('trained_models.pkl')
+                st.rerun()
+    
+    # Option 2: Try Google Drive if configured
+    if GDRIVE_FILE_ID or GDRIVE_URL:
+        st.info("📥 Downloading from Google Drive...")
+        downloaded = download_from_gdrive(GDRIVE_FILE_ID, GDRIVE_URL)
+        if downloaded:
+            st.rerun()  # Reload to load the downloaded file
+    
+    # Option 3: Show upload interface
+    st.error("### ❌ Model file not found!")
+    st.markdown("---")
+    
+    # Tab interface for different options
+    tab1, tab2, tab3 = st.tabs(["📤 Upload File", "🔗 Google Drive Link", "📋 Instructions"])
+    
+    with tab1:
+        st.markdown("### 📤 Upload Model File")
+        st.warning("⚠️ Streamlit upload limit: 200MB. For 300MB files, use Google Drive (Tab 2)")
+        
+        uploaded_file = st.file_uploader(
+            "Upload trained_models.pkl (max 200MB)",
+            type=['pkl'],
+            help="For files >200MB, use Google Drive option"
+        )
+        
+        if uploaded_file is not None:
+            file_size = len(uploaded_file.getvalue()) / 1024 / 1024
+            st.info(f"File size: {file_size:.1f} MB")
+            
+            if file_size > 200:
+                st.error("❌ File too large! Use Google Drive option instead.")
+            else:
+                with st.spinner("Uploading..."):
+                    with open('trained_models.pkl', 'wb') as f:
+                        f.write(uploaded_file.getvalue())
+                st.success("✅ Uploaded! Reloading...")
+                st.rerun()
+    
+    with tab2:
+        st.markdown("### 🔗 Google Drive Link (For Large Files)")
+        st.markdown("""
+        **Steps:**
+        1. Upload `trained_models.pkl` to Google Drive
+        2. Right-click → Share → "Anyone with the link"
+        3. Copy the link
+        4. Paste below
+        """)
+        
+        gdrive_link = st.text_input(
+            "Google Drive Link:",
+            placeholder="https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing"
+        )
+        
+        if st.button("📥 Download from Google Drive", type="primary"):
+            if gdrive_link:
+                # Extract file ID
+                if '/d/' in gdrive_link:
+                    file_id = gdrive_link.split('/d/')[1].split('/')[0]
+                elif 'id=' in gdrive_link:
+                    file_id = gdrive_link.split('id=')[1].split('&')[0]
+                else:
+                    file_id = gdrive_link
+                
+                downloaded = download_from_gdrive(file_id=file_id)
+                if downloaded:
+                    st.success("✅ Download complete!")
+                    st.rerun()
+            else:
+                st.error("Please enter a Google Drive link")
+    
+    with tab3:
+        st.markdown("""
+        ### 📋 How to Train Models
+        
+        **On your local machine:**
+        
+        ```bash
+        # 1. Install dependencies
+        pip install pandas numpy scikit-learn catboost imbalanced-learn
+        
+        # 2. Run training (4-6 minutes)
+        python train_catboost_lof.py
+        
+        # 3. This creates trained_models.pkl (300MB)
+        ```
+        
+        **Then choose:**
+        - **Tab 1 (Upload):** For files <200MB
+        - **Tab 2 (Google Drive):** For files >200MB ⭐ **Recommended**
+        
+        ---
+        
+        ### 🔗 Permanent Google Drive Setup
+        
+        **To avoid re-uploading every time:**
+        
+        1. Upload to Google Drive (one time)
+        2. Get shareable link
+        3. Set in code (line 29-30):
+           ```python
+           GDRIVE_FILE_ID = "your_file_id_here"
+           ```
+        4. Redeploy - auto-downloads on startup!
+        """)
+    
+    st.stop()
 
 @st.cache_data
 def load_metrics():
     """Load pre-computed metrics"""
-    import os
     if not os.path.exists('metrics.json'):
         return None
     try:
@@ -119,7 +199,6 @@ def load_metrics():
 @st.cache_data
 def load_sample_predictions():
     """Load sample predictions"""
-    import os
     if not os.path.exists('sample_predictions.json'):
         return None
     try:
@@ -129,77 +208,47 @@ def load_sample_predictions():
         st.warning(f"Could not load sample predictions: {e}")
         return None
 
-@st.cache_data
-def load_feature_stats():
-    """Load feature statistics"""
-    import os
-    if not os.path.exists('feature_stats.json'):
-        return None
-    try:
-        with open('feature_stats.json', 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        st.warning(f"Could not load feature stats: {e}")
-        return None
-
 def predict_single_sample(models, features):
-    """Make prediction on single sample"""
-    # Scale features
+    """Make prediction on single sample - CatBoost + LOF"""
     features_scaled = models['scaler'].transform([features])
     
-    # XGBoost prediction
-    xgb_proba = models['xgb_model'].predict_proba(features_scaled)[0, 1]
-    xgb_pred = 1 if xgb_proba >= models['xgb_threshold'] else 0
+    # CatBoost
+    catboost_proba = models['catboost_model'].predict_proba(features_scaled)[0, 1]
+    catboost_pred = 1 if catboost_proba >= models['catboost_threshold'] else 0
     
-    # OCSVM prediction
-    ocsvm_decision = models['ocsvm_model'].predict(features_scaled)[0]
-    ocsvm_pred = 1 if ocsvm_decision == -1 else 0
-    
-    # FIXED: Correct probability calculation (negative values = attacks = high probability)
-    decision_score = models['ocsvm_model'].decision_function(features_scaled)[0]
-    ocsvm_proba = 1 / (1 + np.exp(-decision_score))  # Fixed: Added negative sign
+    # LOF
+    lof_decision = models['lof_model'].predict(features_scaled)[0]
+    lof_pred = 1 if lof_decision == -1 else 0
+    lof_score = models['lof_model'].score_samples(features_scaled)[0]
+    scaled_score = lof_score * 2.0
+    lof_proba = 1 / (1 + np.exp(scaled_score))
+    lof_proba = np.clip(lof_proba, 0.01, 0.99)
     
     # Voting
-    voting_pred = max(xgb_pred, ocsvm_pred)
-    voting_proba = max(xgb_proba, ocsvm_proba)
+    voting_pred = max(catboost_pred, lof_pred)
+    voting_proba = max(catboost_proba, lof_proba)
     
     return {
-        'xgb_pred': xgb_pred,
-        'xgb_proba': xgb_proba,
-        'ocsvm_pred': ocsvm_pred,
-        'ocsvm_proba': ocsvm_proba,
+        'catboost_pred': catboost_pred,
+        'catboost_proba': catboost_proba,
+        'lof_pred': lof_pred,
+        'lof_proba': lof_proba,
         'voting_pred': voting_pred,
         'voting_proba': voting_proba
     }
 
-def plot_confusion_matrix_custom(y_true, y_pred):
-    """Plot confusion matrix"""
-    cm = confusion_matrix(y_true, y_pred)
-    fig, ax = plt.subplots(figsize=(6, 5), facecolor='black')
-    ax.set_facecolor('black')
-    
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax, 
-                cbar_kws={'label': 'Count'})
-    ax.set_xlabel('Predicted', color='white')
-    ax.set_ylabel('True', color='white')
-    ax.set_title('Confusion Matrix', color='white')
-    ax.tick_params(colors='white')
-    
-    return fig
-
 # Main app
 st.title("🛡️ IDS Inference Dashboard")
-st.markdown("**Pre-trained Hybrid Model: XGBoost + One-Class SVM**")
-st.caption("Trained locally • Deployed for inference • No training overhead")
+st.markdown("**Pre-trained Hybrid Model: CatBoost + LOF**")
+st.caption("Supports large files via Google Drive • 2-3x faster training")
 st.markdown("---")
 
-# Load everything
-models = load_models()  # This will handle missing files with clear instructions
+# Load models
+models = load_models()
 metrics = load_metrics()
 sample_preds = load_sample_predictions()
-feature_stats = load_feature_stats()
 
-# Sidebar - Mode selection
+# Sidebar
 st.sidebar.header("⚙️ Mode Selection")
 mode = st.sidebar.radio(
     "Choose Mode:",
@@ -213,6 +262,11 @@ if metrics:
     st.sidebar.info(f"**Samples:** {metrics['dataset_info']['total_samples']:,}")
     st.sidebar.info(f"**Features:** {metrics['dataset_info']['features']}")
 
+# File info
+if os.path.exists('trained_models.pkl'):
+    file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
+    st.sidebar.success(f"📦 Model: {file_size:.1f} MB")
+
 # MODE 1: View Metrics
 if mode == "📊 View Metrics":
     st.header("📊 Model Performance Metrics")
@@ -223,7 +277,6 @@ if mode == "📊 View Metrics":
     
     results = metrics['results']
     
-    # Main metrics
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Accuracy", f"{results['accuracy']:.3f}")
     col2.metric("Precision", f"{results['precision']:.3f}")
@@ -233,11 +286,10 @@ if mode == "📊 View Metrics":
     
     st.markdown("---")
     
-    # Detailed metrics
     col_a, col_b = st.columns(2)
     
     with col_a:
-        st.subheader("Confusion Matrix Breakdown")
+        st.subheader("Confusion Matrix")
         st.metric("True Positives", f"{results['true_positives']:,}")
         st.metric("True Negatives", f"{results['true_negatives']:,}")
         st.metric("False Positives", f"{results['false_positives']:,}")
@@ -245,115 +297,62 @@ if mode == "📊 View Metrics":
     
     with col_b:
         st.subheader("Additional Metrics")
-        st.metric("False Positive Rate", f"{results['fpr']:.4f}")
-        st.metric("False Negative Rate", f"{results['fnr']:.4f}")
+        st.metric("FPR", f"{results['fpr']:.4f}")
+        st.metric("FNR", f"{results['fnr']:.4f}")
         st.metric("Training Time", f"{results['training_time']:.2f}s")
-    
-    # Dataset info
-    st.markdown("---")
-    st.subheader("📊 Dataset Information")
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Samples", f"{metrics['dataset_info']['total_samples']:,}")
-    col2.metric("Training Samples", f"{metrics['dataset_info']['train_samples']:,}")
-    col3.metric("Test Samples", f"{metrics['dataset_info']['test_samples']:,}")
-    
-    # Class distribution
-    st.markdown("---")
-    st.subheader("Class Distribution")
-    class_dist = metrics['dataset_info']['class_distribution']
-    
-    dist_df = pd.DataFrame({
-        'Class': ['Benign', 'Attack'],
-        'Count': [class_dist.get('0', 0), class_dist.get('1', 0)]
-    })
-    
-    st.bar_chart(dist_df.set_index('Class'))
 
 # MODE 2: Live Prediction
 elif mode == "🎯 Live Prediction":
     st.header("🎯 Live Attack Prediction")
-    st.markdown("Enter network flow features to predict if traffic is benign or attack")
-    
-    st.markdown("---")
-    
-    # Create input form
-    st.subheader("📝 Enter Feature Values")
     
     feature_names = models['feature_names']
     n_features = len(feature_names)
     
-    # Option 1: Use random sample
     if st.button("🎲 Generate Random Sample"):
         st.session_state.random_sample = True
     
-    # Option 2: Manual input (show first 10 features for simplicity)
     st.markdown("**Quick Input (Top 10 Features):**")
     
     input_values = []
-    
-    # Create 2 columns for inputs
     col1, col2 = st.columns(2)
     
-    # Show first 10 features for manual input
     for i, feature in enumerate(feature_names[:10]):
-        if i % 2 == 0:
-            with col1:
-                if hasattr(st.session_state, 'random_sample') and st.session_state.random_sample:
-                    default = np.random.randn()
-                else:
-                    default = 0.0
-                val = st.number_input(feature, value=float(default), format="%.4f", key=f"feat_{i}")
-                input_values.append(val)
-        else:
-            with col2:
-                if hasattr(st.session_state, 'random_sample') and st.session_state.random_sample:
-                    default = np.random.randn()
-                else:
-                    default = 0.0
-                val = st.number_input(feature, value=float(default), format="%.4f", key=f"feat_{i}")
-                input_values.append(val)
+        with col1 if i % 2 == 0 else col2:
+            default = np.random.randn() if getattr(st.session_state, 'random_sample', False) else 0.0
+            val = st.number_input(feature, value=float(default), format="%.4f", key=f"feat_{i}")
+            input_values.append(val)
     
-    # Fill remaining features with zeros or random
-    if hasattr(st.session_state, 'random_sample') and st.session_state.random_sample:
-        input_values.extend([np.random.randn() for _ in range(n_features - 10)])
-    else:
-        input_values.extend([0.0 for _ in range(n_features - 10)])
+    input_values.extend([np.random.randn() if getattr(st.session_state, 'random_sample', False) else 0.0 
+                        for _ in range(n_features - 10)])
     
     st.markdown("---")
     
-    # Predict button
     if st.button("🚀 Predict", type="primary"):
-        with st.spinner("Making prediction..."):
-            prediction = predict_single_sample(models, input_values)
+        prediction = predict_single_sample(models, input_values)
         
         st.success("✅ Prediction Complete!")
-        
-        # Show results
         st.markdown("---")
-        st.subheader("🎯 Prediction Results")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("### XGBoost")
-            result = "🔴 **ATTACK**" if prediction['xgb_pred'] == 1 else "🟢 **BENIGN**"
+            st.markdown("### CatBoost")
+            result = "🔴 **ATTACK**" if prediction['catboost_pred'] == 1 else "🟢 **BENIGN**"
             st.markdown(result)
-            st.metric("Confidence", f"{prediction['xgb_proba']:.2%}")
+            st.metric("Confidence", f"{prediction['catboost_proba']:.2%}")
         
         with col2:
-            st.markdown("### OCSVM")
-            result = "🔴 **ATTACK**" if prediction['ocsvm_pred'] == 1 else "🟢 **BENIGN**"
+            st.markdown("### LOF")
+            result = "🔴 **ATTACK**" if prediction['lof_pred'] == 1 else "🟢 **BENIGN**"
             st.markdown(result)
-            st.metric("Confidence", f"{prediction['ocsvm_proba']:.2%}")
+            st.metric("Confidence", f"{prediction['lof_proba']:.2%}")
         
         with col3:
-            st.markdown("### 🎖️ **Voting Ensemble**")
+            st.markdown("### 🎖️ **Voting**")
             result = "🔴 **ATTACK**" if prediction['voting_pred'] == 1 else "🟢 **BENIGN**"
             st.markdown(f"## {result}")
             st.metric("Confidence", f"{prediction['voting_proba']:.2%}")
         
-        # Clear random sample flag
         if hasattr(st.session_state, 'random_sample'):
             st.session_state.random_sample = False
 
@@ -365,54 +364,37 @@ elif mode == "📋 Sample Predictions":
         st.error("Sample predictions not found!")
         st.stop()
     
-    # Create DataFrame
     df = pd.DataFrame({
         'True Label': ['Attack' if y == 1 else 'Benign' for y in sample_preds['y_true']],
-        'XGBoost': ['Attack' if y == 1 else 'Benign' for y in sample_preds['y_pred_xgb']],
-        'OCSVM': ['Attack' if y == 1 else 'Benign' for y in sample_preds['y_pred_ocsvm']],
+        'CatBoost': ['Attack' if y == 1 else 'Benign' for y in sample_preds['y_pred_catboost']],
+        'LOF': ['Attack' if y == 1 else 'Benign' for y in sample_preds['y_pred_lof']],
         'Voting': ['Attack' if y == 1 else 'Benign' for y in sample_preds['y_pred_voting']],
-        'XGB Prob': sample_preds['proba_xgb'],
-        'OCSVM Prob': sample_preds['proba_ocsvm'],
+        'CatBoost Prob': sample_preds['proba_catboost'],
+        'LOF Prob': sample_preds['proba_lof'],
         'Voting Prob': sample_preds['proba_voting']
     })
     
-    # Filter options
     col1, col2 = st.columns(2)
     with col1:
-        filter_option = st.selectbox(
-            "Filter",
-            ["All", "Correct Predictions", "Incorrect Predictions", "Attacks Only", "Benign Only"]
-        )
-    
+        filter_option = st.selectbox("Filter", ["All", "Correct Predictions", "Incorrect Predictions", "Attacks Only", "Benign Only"])
     with col2:
         n_rows = st.slider("Rows to display", 10, 100, 50)
     
-    # Apply filter
     y_true = np.array(sample_preds['y_true'])
     y_pred = np.array(sample_preds['y_pred_voting'])
     
     if filter_option == "Correct Predictions":
-        mask = y_true == y_pred
-        df_filtered = df[mask]
+        df_filtered = df[y_true == y_pred]
     elif filter_option == "Incorrect Predictions":
-        mask = y_true != y_pred
-        df_filtered = df[mask]
+        df_filtered = df[y_true != y_pred]
     elif filter_option == "Attacks Only":
-        mask = y_true == 1
-        df_filtered = df[mask]
+        df_filtered = df[y_true == 1]
     elif filter_option == "Benign Only":
-        mask = y_true == 0
-        df_filtered = df[mask]
+        df_filtered = df[y_true == 0]
     else:
         df_filtered = df
     
     st.dataframe(df_filtered.head(n_rows), use_container_width=True)
     
-    # Download option
     csv = df_filtered.to_csv(index=False).encode()
-    st.download_button(
-        "⬇️ Download Sample Predictions",
-        csv,
-        "sample_predictions.csv",
-        "text/csv"
-    )
+    st.download_button("⬇️ Download CSV", csv, "predictions.csv", "text/csv")
