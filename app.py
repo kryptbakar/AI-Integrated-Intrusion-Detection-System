@@ -324,7 +324,7 @@ def predict_single_sample(models, features):
     }
 
 
-def generate_biased_random_sample(models, feature_names, feature_distributions, force_class, max_tries: int = 30):
+def generate_biased_random_sample(models, feature_names, feature_distributions, force_class, max_tries: int = 400):
     """
     Generate a random feature vector that is biased toward a desired class
     according to the *model's own* predictions.
@@ -353,8 +353,15 @@ def generate_biased_random_sample(models, feature_names, feature_distributions, 
             for feat in feature_names
         ]
         pred = predict_single_sample(models, sample)
-        if pred["voting_pred"] == target_label:
-            return sample
+
+        if target_label == 0:
+            # For benign, be strict: low voting probability & benign label
+            if pred["voting_pred"] == 0 and pred["voting_proba"] < 0.5:
+                return sample
+        else:
+            # For attacks, accept any attack-labeled sample
+            if pred["voting_pred"] == 1:
+                return sample
         best_sample = sample
 
     # Fallback: return the last sample even if it didn't match the target
