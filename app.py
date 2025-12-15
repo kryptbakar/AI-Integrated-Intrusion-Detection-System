@@ -30,34 +30,24 @@ st.markdown('''
     </style>
 ''', unsafe_allow_html=True)
 
-def download_from_google_drive(file_id, destination='trained_models.pkl'):
-    """Download large file from Google Drive"""
-    
-    def get_confirm_token(response):
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                return value
-        return None
-
-    def save_response_content(response, destination):
-        CHUNK_SIZE = 32768
-        with open(destination, "wb") as f:
-            for chunk in response.iter_content(CHUNK_SIZE):
-                if chunk:
-                    f.write(chunk)
-
+def download_from_google_drive(file_id, destination):
     URL = "https://docs.google.com/uc?export=download"
-    
+
     session = requests.Session()
-    
-    response = session.get(URL, params={'id': file_id}, stream=True)
-    token = get_confirm_token(response)
-    
-    if token:
-        params = {'id': file_id, 'confirm': token}
-        response = session.get(URL, params=params, stream=True)
-    
-    save_response_content(response, destination)
+
+    response = session.get(URL, params={"id": file_id, "confirm": "t"}, stream=True)
+
+    # ❌ Google returned HTML instead of file
+    content_type = response.headers.get("Content-Type", "")
+    if "text/html" in content_type:
+        raise RuntimeError("Google Drive returned HTML instead of file. Check sharing or quota.")
+
+    CHUNK_SIZE = 32768
+    with open(destination, "wb") as f:
+        for chunk in response.iter_content(CHUNK_SIZE):
+            if chunk:
+                f.write(chunk)
+
 
 def extract_file_id(url):
     """Extract file ID from Google Drive URL"""
