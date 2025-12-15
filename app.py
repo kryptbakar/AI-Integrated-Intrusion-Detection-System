@@ -154,7 +154,10 @@ def predict_single_sample(models, features):
     # OCSVM prediction
     ocsvm_decision = models['ocsvm_model'].predict(features_scaled)[0]
     ocsvm_pred = 1 if ocsvm_decision == -1 else 0
-    ocsvm_proba = 1 / (1 + np.exp(models['ocsvm_model'].decision_function(features_scaled)[0]))
+    
+    # FIXED: Correct probability calculation (negative values = attacks = high probability)
+    decision_score = models['ocsvm_model'].decision_function(features_scaled)[0]
+    ocsvm_proba = 1 / (1 + np.exp(-decision_score))  # Fixed: Added negative sign
     
     # Voting
     voting_pred = max(xgb_pred, ocsvm_pred)
