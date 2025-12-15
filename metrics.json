@@ -1,0 +1,28 @@
+{
+  "results": {
+    "model_name": "Optimized Voting Hybrid (XGBoost OR OCSVM)",
+    "accuracy": 0.7100650780589006,
+    "precision": 0.5678670789451251,
+    "recall": 0.8700251709726444,
+    "f1_score": 0.6871984357342812,
+    "roc_auc": 0.7796436525257473,
+    "fpr": 0.3823015887525824,
+    "fnr": 0.12997482902735563,
+    "true_negatives": 270290,
+    "false_positives": 167286,
+    "false_negatives": 32841,
+    "true_positives": 219831,
+    "training_time": 1031.7564022541046
+  },
+  "training_date": "2025-12-15T21:16:47.048288",
+  "dataset_info": {
+    "total_samples": 2300825,
+    "train_samples": 1610577,
+    "test_samples": 690248,
+    "features": 78,
+    "class_distribution": {
+      "0": 1743179,
+      "1": 557646
+    }
+  }
+}
