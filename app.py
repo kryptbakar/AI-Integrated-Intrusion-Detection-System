@@ -14,6 +14,24 @@ import seaborn as sns
 import os
 import gdown
 
+FEATURE_RANGES = {
+    "Destination Port": (0, 65535),
+    "Flow Duration": (0, 5_000_000),
+    "Total Fwd Packets": (0, 10_000),
+    "Total Backward Packets": (0, 10_000),
+    "Flow Bytes/s": (0, 1e6),
+    "Flow Packets/s": (0, 1e5),
+    "Packet Length Mean": (40, 1500),
+    "Packet Length Std": (0, 500),
+    "Fwd Packet Length Mean": (40, 1500),
+    "Bwd Packet Length Mean": (40, 1500),
+}
+def smart_default(feature):
+    if feature in FEATURE_RANGES:
+        low, high = FEATURE_RANGES[feature]
+        return float(np.random.uniform(low, high))
+    return 0.0
+
 # Page config
 st.set_page_config(
     page_title="IDS - Inference Dashboard",
@@ -186,15 +204,24 @@ def load_models():
 
 @st.cache_data
 def load_metrics():
-    """Load pre-computed metrics"""
-    if not os.path.exists('metrics.json'):
-        return None
-    try:
-        with open('metrics.json', 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        st.warning(f"Could not load metrics: {e}")
-        return None
+    """Load pre-computed metrics safely"""
+    possible_paths = [
+        "metrics.json",
+        "./metrics.json",
+        os.path.join(os.getcwd(), "metrics.json")
+    ]
+
+    for path in possible_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                st.warning(f"Could not load metrics from {path}: {e}")
+
+    st.error("❌ metrics.json not found in repository")
+    return None
+
 
 @st.cache_data
 def load_sample_predictions():
@@ -316,14 +343,25 @@ elif mode == "🎯 Live Prediction":
     input_values = []
     col1, col2 = st.columns(2)
     
+    random_sample = getattr(st.session_state, "random_sample", False)
+
     for i, feature in enumerate(feature_names[:10]):
         with col1 if i % 2 == 0 else col2:
-            default = np.random.randn() if getattr(st.session_state, 'random_sample', False) else 0.0
-            val = st.number_input(feature, value=float(default), format="%.4f", key=f"feat_{i}")
+            default = smart_default(feature) if random_sample else 0.0
+            val = st.number_input(
+                feature,
+                value=float(default),
+                format="%.4f",
+                key=f"feat_{i}"
+            )
             input_values.append(val)
+
     
-    input_values.extend([np.random.randn() if getattr(st.session_state, 'random_sample', False) else 0.0 
-                        for _ in range(n_features - 10)])
+    for feature in feature_names[10:]:
+        input_values.append(
+        smart_default(feature) if random_sample else 0.0
+    )
+
     
     st.markdown("---")
     
