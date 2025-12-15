@@ -68,8 +68,8 @@ def load_sample_predictions():
 
 def generate_realistic_sample(feature_names):
     """
-    Generate realistic network traffic features
-    Returns a mix of benign and attack-like patterns
+    Generate realistic samples in SCALED space (mean=0, std=1)
+    This ensures LOF sees them as normal patterns
     """
     sample = []
     
@@ -77,103 +77,35 @@ def generate_realistic_sample(feature_names):
     is_benign = np.random.rand() > 0.5  # 50/50 chance
     
     for feature in feature_names:
-        # Generate realistic values based on feature name
-        feature_lower = feature.lower()
+        # Generate values in scaled space (standardized)
+        # After scaling: mean=0, std=1
         
-        if 'port' in feature_lower:
-            if is_benign:
-                # Common service ports: 80, 443, 22, 53, etc.
-                common_ports = [22, 53, 80, 110, 143, 443, 587, 993, 3306, 8080]
-                value = np.random.choice(common_ports)
-            else:
-                # Random high ports or unusual ports
-                value = np.random.randint(1024, 65535)
-        
-        elif 'duration' in feature_lower:
-            if is_benign:
-                # Normal session: 1-300 seconds
-                value = np.random.uniform(1000000, 300000000)
-            else:
-                # Very short or very long
-                if np.random.rand() > 0.5:
-                    value = np.random.uniform(1, 10000)  # Very short
-                else:
-                    value = np.random.uniform(500000000, 2000000000)  # Very long
-        
-        elif 'packet' in feature_lower and 'total' in feature_lower:
-            if is_benign:
-                # Normal traffic: 10-1000 packets
-                value = np.random.uniform(10, 1000)
-            else:
-                # Flood: many packets or very few
-                if np.random.rand() > 0.5:
-                    value = np.random.uniform(5000, 50000)
-                else:
-                    value = np.random.uniform(1, 5)
-        
-        elif 'length' in feature_lower and 'mean' in feature_lower:
-            if is_benign:
-                # Normal packet size: 500-1400 bytes
-                value = np.random.uniform(500, 1400)
-            else:
-                # Unusual sizes
-                value = np.random.uniform(40, 200)
-        
-        elif 'bytes/s' in feature_lower or 'byte' in feature_lower and 'rate' in feature_lower:
-            if is_benign:
-                # Normal bandwidth: 1KB/s - 10MB/s
-                value = np.random.uniform(1000, 10000000)
-            else:
-                # Flood or very low
-                if np.random.rand() > 0.5:
-                    value = np.random.uniform(50000000, 500000000)
-                else:
-                    value = np.random.uniform(1, 100)
-        
-        elif 'packets/s' in feature_lower or 'packet' in feature_lower and 'rate' in feature_lower:
-            if is_benign:
-                # Normal rate: 1-100 packets/sec
-                value = np.random.uniform(1, 100)
-            else:
-                # Flood or very low
-                if np.random.rand() > 0.5:
-                    value = np.random.uniform(500, 10000)
-                else:
-                    value = np.random.uniform(0.01, 0.5)
-        
-        elif 'flag' in feature_lower or 'count' in feature_lower:
-            if is_benign:
-                # Normal flag counts
-                value = np.random.uniform(1, 10)
-            else:
-                # Unusual flag patterns
-                value = np.random.uniform(0, 1) if np.random.rand() > 0.5 else np.random.uniform(20, 100)
-        
-        elif 'time' in feature_lower or 'iat' in feature_lower:
-            if is_benign:
-                # Normal inter-arrival time
-                value = np.random.uniform(1000, 100000)
-            else:
-                # Very fast or very slow
-                if np.random.rand() > 0.5:
-                    value = np.random.uniform(1, 100)
-                else:
-                    value = np.random.uniform(500000, 5000000)
-        
+        if is_benign:
+            # Benign: values close to mean (within 2 std deviations)
+            # This makes LOF see it as "normal"
+            value = np.random.normal(0, 0.8)  # Concentrated around 0
+            
         else:
-            # Generic feature: use moderate random values
-            if is_benign:
-                value = np.random.uniform(0, 100)
+            # Attack: values far from mean (outliers)
+            # This makes LOF see it as "abnormal"
+            if np.random.rand() > 0.5:
+                # Extreme positive outlier
+                value = np.random.uniform(3, 8)
             else:
-                value = np.random.uniform(0, 1000)
+                # Extreme negative outlier  
+                value = np.random.uniform(-8, -3)
         
         sample.append(float(value))
     
     return sample, is_benign
 
-def predict_single_sample(models, features):
+def predict_single_sample(models, features, pre_scaled=False):
     """Make prediction - CatBoost + LOF"""
-    features_scaled = models['scaler'].transform([features])
+    # Scale features only if not already scaled
+    if pre_scaled:
+        features_scaled = np.array(features).reshape(1, -1)
+    else:
+        features_scaled = models['scaler'].transform([features])
     
     # CatBoost
     catboost_proba = models['catboost_model'].predict_proba(features_scaled)[0, 1]
@@ -326,17 +258,19 @@ elif mode == "🎯 Live Prediction":
     
     # Random sample button
     if st.button("🎲 Generate Random Sample"):
-        # Generate realistic sample
+        # Generate realistic sample IN SCALED SPACE
         random_values, expected_class = generate_realistic_sample(feature_names)
         st.session_state.random_values = random_values
         st.session_state.expected_class = expected_class
         st.session_state.random_sample = True
+        st.session_state.values_are_scaled = True  # Mark as already scaled
         st.rerun()
     
     # Show hint if random sample was generated
     if st.session_state.get('random_sample', False):
         expected = "🟢 Benign" if st.session_state.get('expected_class', False) else "🔴 Attack"
-        st.info(f"💡 Generated sample with {expected}-like pattern")
+        st.info(f"💡 Generated sample with {expected}-like pattern (values are in scaled space)")
+    
     
     st.markdown("**Quick Input (Top 10 Features):**")
     
@@ -386,8 +320,16 @@ elif mode == "🎯 Live Prediction":
     
     # Predict button
     if st.button("🚀 Predict", type="primary"):
+        # Check if values are already scaled
+        values_are_scaled = st.session_state.get('values_are_scaled', False)
+        
         with st.spinner("Making prediction..."):
-            prediction = predict_single_sample(models, input_values)
+            if values_are_scaled:
+                # Values are already in scaled space, use directly
+                prediction = predict_single_sample(models, input_values, pre_scaled=True)
+            else:
+                # Values need scaling (manual input)
+                prediction = predict_single_sample(models, input_values, pre_scaled=False)
         
         st.success("✅ Prediction Complete!")
         
@@ -435,8 +377,9 @@ elif mode == "🎯 Live Prediction":
                 }
             })
         
-        # Clear random sample flag
+        # Clear random sample flags
         st.session_state.random_sample = False
+        st.session_state.values_are_scaled = False
 
 # MODE 3: Sample Predictions
 elif mode == "📋 Sample Predictions":
