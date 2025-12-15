@@ -182,9 +182,32 @@ def predict_single_sample(models, features):
     # LOF
     lof_decision = models['lof_model'].predict(features_scaled)[0]
     lof_pred = 1 if lof_decision == -1 else 0
+    
+    # LOF probability - improved calculation
+    # score_samples returns: negative values = outliers (attacks)
     lof_score = models['lof_model'].score_samples(features_scaled)[0]
-    scaled_score = lof_score * 2.0
-    lof_proba = 1 / (1 + np.exp(scaled_score))
+    
+    # More aggressive scaling to get varied probabilities
+    # Adjust multiplier based on typical score range
+    if lof_score < -2:
+        # Very negative = definitely attack
+        lof_proba = 0.95
+    elif lof_score < -1:
+        # Moderately negative = likely attack
+        lof_proba = 0.70 + (abs(lof_score) - 1) * 0.25
+    elif lof_score < 0:
+        # Slightly negative = maybe attack
+        lof_proba = 0.50 + abs(lof_score) * 0.20
+    elif lof_score < 1:
+        # Slightly positive = probably benign
+        lof_proba = 0.50 - lof_score * 0.20
+    elif lof_score < 2:
+        # Moderately positive = likely benign
+        lof_proba = 0.30 - (lof_score - 1) * 0.20
+    else:
+        # Very positive = definitely benign
+        lof_proba = 0.05
+    
     lof_proba = np.clip(lof_proba, 0.01, 0.99)
     
     # Voting
@@ -196,6 +219,7 @@ def predict_single_sample(models, features):
         'catboost_proba': catboost_proba,
         'lof_pred': lof_pred,
         'lof_proba': lof_proba,
+        'lof_score': lof_score,  # For debugging
         'voting_pred': voting_pred,
         'voting_proba': voting_proba
     }
@@ -390,6 +414,26 @@ elif mode == "🎯 Live Prediction":
             result = "🔴 **ATTACK**" if prediction['voting_pred'] == 1 else "🟢 **BENIGN**"
             st.markdown(f"## {result}")
             st.metric("Confidence", f"{prediction['voting_proba']:.2%}")
+        
+        # Debug info
+        with st.expander("🔍 Debug Info"):
+            st.json({
+                'CatBoost': {
+                    'probability': f"{prediction['catboost_proba']:.4f}",
+                    'prediction': 'ATTACK' if prediction['catboost_pred'] == 1 else 'BENIGN',
+                    'threshold': models['catboost_threshold']
+                },
+                'LOF': {
+                    'raw_score': f"{prediction.get('lof_score', 0):.4f}",
+                    'probability': f"{prediction['lof_proba']:.4f}",
+                    'prediction': 'ATTACK' if prediction['lof_pred'] == 1 else 'BENIGN',
+                    'note': 'Negative scores = outliers/attacks'
+                },
+                'Voting': {
+                    'strategy': 'OR logic (max of both)',
+                    'final': 'ATTACK' if prediction['voting_pred'] == 1 else 'BENIGN'
+                }
+            })
         
         # Clear random sample flag
         st.session_state.random_sample = False
