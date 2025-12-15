@@ -66,35 +66,43 @@ def load_sample_predictions():
     except:
         return None
 
-def generate_realistic_sample(feature_names):
+def generate_realistic_sample(models):
     """
-    Generate realistic samples in SCALED space (mean=0, std=1)
-    This ensures LOF sees them as normal patterns
+    Generate sample from actual test data distribution
+    This ensures LOF recognizes the patterns
     """
-    sample = []
-    
-    # Randomly choose: benign or attack pattern
-    is_benign = np.random.rand() > 0.5  # 50/50 chance
-    
-    for feature in feature_names:
-        # Generate values in scaled space (standardized)
-        # After scaling: mean=0, std=1
-        
-        if is_benign:
-            # Benign: values close to mean (within 2 std deviations)
-            # This makes LOF see it as "normal"
-            value = np.random.normal(0, 0.8)  # Concentrated around 0
+    # Try to load actual test samples first
+    try:
+        if os.path.exists('sample_predictions.json'):
+            with open('sample_predictions.json', 'r') as f:
+                sample_data = json.load(f)
             
+            # Check if we have feature data
+            if 'X_test_samples' in sample_data and len(sample_data['X_test_samples']) > 0:
+                # Get random sample from actual test data
+                idx = np.random.randint(0, len(sample_data['X_test_samples']))
+                sample = sample_data['X_test_samples'][idx]
+                is_benign = sample_data['y_true'][idx] == 0
+                return sample, is_benign
+    except:
+        pass
+    
+    # Fallback: generate synthetic sample
+    # Use VERY small variations to avoid being flagged as outlier
+    n_features = len(models['feature_names'])
+    is_benign = np.random.rand() > 0.5
+    
+    sample = []
+    for _ in range(n_features):
+        if is_benign:
+            # Benign: tiny variations (within 1 std dev)
+            value = np.random.normal(0, 0.3)
         else:
-            # Attack: values far from mean (outliers)
-            # This makes LOF see it as "abnormal"
-            if np.random.rand() > 0.5:
-                # Extreme positive outlier
-                value = np.random.uniform(3, 8)
+            # Attack: moderate outliers (not too extreme)
+            if np.random.rand() > 0.6:
+                value = np.random.choice([np.random.uniform(2, 4), np.random.uniform(-4, -2)])
             else:
-                # Extreme negative outlier  
-                value = np.random.uniform(-8, -3)
-        
+                value = np.random.normal(0, 0.5)
         sample.append(float(value))
     
     return sample, is_benign
@@ -259,7 +267,7 @@ elif mode == "🎯 Live Prediction":
     # Random sample button
     if st.button("🎲 Generate Random Sample"):
         # Generate realistic sample IN SCALED SPACE
-        random_values, expected_class = generate_realistic_sample(feature_names)
+        random_values, expected_class = generate_realistic_sample(models)
         st.session_state.random_values = random_values
         st.session_state.expected_class = expected_class
         st.session_state.random_sample = True
