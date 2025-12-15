@@ -1,6 +1,6 @@
 """
-Streamlit App with Google Drive Auto-Download
-Supports large model files (300MB+) via Google Drive
+Streamlit App - Manual Model Upload
+Works without gdown - for 300MB files, use manual upload or external hosting
 """
 
 from __future__ import annotations
@@ -9,10 +9,7 @@ import pickle
 import json
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import os
-import gdown
 
 # Page config
 st.set_page_config(
@@ -31,156 +28,78 @@ st.markdown('''
     </style>
 ''', unsafe_allow_html=True)
 
-# Configuration - Set your Google Drive file ID here
-GDRIVE_FILE_ID = None  # Set this after uploading to Google Drive
-GDRIVE_URL = None      # Or set direct URL
-
-@st.cache_resource
-def download_from_gdrive(file_id=None, url=None):
-    """Download model file from Google Drive"""
-    if file_id:
-        download_url = f"https://drive.google.com/uc?id={file_id}"
-    elif url:
-        download_url = url
-    else:
-        return None
-    
-    output = 'trained_models.pkl'
-    
-    try:
-        with st.spinner(f"📥 Downloading model from Google Drive... (300MB)"):
-            gdown.download(download_url, output, quiet=False, fuzzy=True)
-        
-        if os.path.exists(output) and os.path.getsize(output) > 1000000:  # >1MB
-            st.success(f"✅ Downloaded {os.path.getsize(output) / 1024 / 1024:.1f} MB")
-            return output
-        else:
-            st.error("❌ Download failed or file too small")
-            return None
-    except Exception as e:
-        st.error(f"❌ Download error: {str(e)}")
-        return None
-
 @st.cache_resource
 def load_models():
-    """Load pre-trained models - with multiple loading options"""
+    """Load pre-trained models"""
     
-    # Option 1: Check if file exists locally
+    # Check if file exists locally
     if os.path.exists('trained_models.pkl'):
         try:
             with open('trained_models.pkl', 'rb') as f:
                 models = pickle.load(f)
-            st.sidebar.success("✅ Models loaded from local file")
+            st.sidebar.success("✅ Models loaded")
             return models
         except Exception as e:
-            st.error(f"❌ Error loading local file: {str(e)}")
-            if st.button("🗑️ Delete corrupted file"):
+            st.error(f"❌ Error loading: {str(e)}")
+            if st.button("🗑️ Delete and re-upload"):
                 os.remove('trained_models.pkl')
                 st.rerun()
     
-    # Option 2: Try Google Drive if configured
-    if GDRIVE_FILE_ID or GDRIVE_URL:
-        st.info("📥 Downloading from Google Drive...")
-        downloaded = download_from_gdrive(GDRIVE_FILE_ID, GDRIVE_URL)
-        if downloaded:
-            st.rerun()  # Reload to load the downloaded file
-    
-    # Option 3: Show upload interface
+    # Show upload interface
     st.error("### ❌ Model file not found!")
     st.markdown("---")
     
-    # Tab interface for different options
-    tab1, tab2, tab3 = st.tabs(["📤 Upload File", "🔗 Google Drive Link", "📋 Instructions"])
+    st.markdown("""
+    ### 📤 Upload Your Model File
     
-    with tab1:
-        st.markdown("### 📤 Upload Model File")
-        st.warning("⚠️ Streamlit upload limit: 200MB. For 300MB files, use Google Drive (Tab 2)")
-        
-        uploaded_file = st.file_uploader(
-            "Upload trained_models.pkl (max 200MB)",
-            type=['pkl'],
-            help="For files >200MB, use Google Drive option"
-        )
-        
-        if uploaded_file is not None:
-            file_size = len(uploaded_file.getvalue()) / 1024 / 1024
-            st.info(f"File size: {file_size:.1f} MB")
-            
-            if file_size > 200:
-                st.error("❌ File too large! Use Google Drive option instead.")
-            else:
-                with st.spinner("Uploading..."):
-                    with open('trained_models.pkl', 'wb') as f:
-                        f.write(uploaded_file.getvalue())
-                st.success("✅ Uploaded! Reloading...")
-                st.rerun()
+    **Your model file is 300MB, which exceeds Streamlit's 200MB upload limit.**
     
-    with tab2:
-        st.markdown("### 🔗 Google Drive Link (For Large Files)")
-        st.markdown("""
-        **Steps:**
-        1. Upload `trained_models.pkl` to Google Drive
-        2. Right-click → Share → "Anyone with the link"
-        3. Copy the link
-        4. Paste below
-        """)
-        
-        gdrive_link = st.text_input(
-            "Google Drive Link:",
-            placeholder="https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing"
-        )
-        
-        if st.button("📥 Download from Google Drive", type="primary"):
-            if gdrive_link:
-                # Extract file ID
-                if '/d/' in gdrive_link:
-                    file_id = gdrive_link.split('/d/')[1].split('/')[0]
-                elif 'id=' in gdrive_link:
-                    file_id = gdrive_link.split('id=')[1].split('&')[0]
-                else:
-                    file_id = gdrive_link
-                
-                downloaded = download_from_gdrive(file_id=file_id)
-                if downloaded:
-                    st.success("✅ Download complete!")
-                    st.rerun()
-            else:
-                st.error("Please enter a Google Drive link")
+    **Solutions:**
     
-    with tab3:
-        st.markdown("""
-        ### 📋 How to Train Models
-        
-        **On your local machine:**
-        
-        ```bash
-        # 1. Install dependencies
-        pip install pandas numpy scikit-learn catboost imbalanced-learn
-        
-        # 2. Run training (4-6 minutes)
-        python train_catboost_lof.py
-        
-        # 3. This creates trained_models.pkl (300MB)
-        ```
-        
-        **Then choose:**
-        - **Tab 1 (Upload):** For files <200MB
-        - **Tab 2 (Google Drive):** For files >200MB ⭐ **Recommended**
-        
-        ---
-        
-        ### 🔗 Permanent Google Drive Setup
-        
-        **To avoid re-uploading every time:**
-        
-        1. Upload to Google Drive (one time)
-        2. Get shareable link
-        3. Set in code (line 29-30):
-           ```python
-           GDRIVE_FILE_ID = "your_file_id_here"
-           ```
-        4. Redeploy - auto-downloads on startup!
-        """)
+    #### Option 1: Use Git LFS (Recommended)
+    ```bash
+    # In your local repo:
+    git lfs install
+    git lfs track "trained_models.pkl"
+    git add .gitattributes trained_models.pkl
+    git commit -m "Add model with Git LFS"
+    git push
+    ```
+    
+    #### Option 2: Host Externally
+    Upload to:
+    - AWS S3 (with public link)
+    - Dropbox (with direct link)
+    - Google Cloud Storage
+    
+    Then update code to download from URL.
+    
+    #### Option 3: Compress the Model
+    ```bash
+    # Compress locally:
+    python -c "
+    import pickle, gzip
+    with open('trained_models.pkl', 'rb') as f:
+        with gzip.open('trained_models.pkl.gz', 'wb') as gz:
+            gz.write(f.read())
+    "
+    # Result: ~100MB (fits in GitHub!)
+    ```
+    
+    #### Option 4: Reduce Model Size
+    Retrain with fewer trees:
+    ```python
+    # In train_catboost_lof.py:
+    CatBoostClassifier(
+        iterations=300,  # Down from 500
+        depth=8          # Down from 10
+    )
+    # Result: ~150MB
+    ```
+    """)
+    
+    st.markdown("---")
+    st.info("💡 Once you've set up one of the above options, redeploy the app!")
     
     st.stop()
 
@@ -209,7 +128,7 @@ def load_sample_predictions():
         return None
 
 def predict_single_sample(models, features):
-    """Make prediction on single sample - CatBoost + LOF"""
+    """Make prediction - CatBoost + LOF"""
     features_scaled = models['scaler'].transform([features])
     
     # CatBoost
@@ -239,8 +158,8 @@ def predict_single_sample(models, features):
 
 # Main app
 st.title("🛡️ IDS Inference Dashboard")
-st.markdown("**Pre-trained Hybrid Model: CatBoost + LOF**")
-st.caption("Supports large files via Google Drive • 2-3x faster training")
+st.markdown("**CatBoost + LOF Hybrid Model**")
+st.caption("Fast inference • No training overhead")
 st.markdown("---")
 
 # Load models
@@ -262,7 +181,6 @@ if metrics:
     st.sidebar.info(f"**Samples:** {metrics['dataset_info']['total_samples']:,}")
     st.sidebar.info(f"**Features:** {metrics['dataset_info']['features']}")
 
-# File info
 if os.path.exists('trained_models.pkl'):
     file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
     st.sidebar.success(f"📦 Model: {file_size:.1f} MB")
