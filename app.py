@@ -35,40 +35,111 @@ st.markdown('''
 @st.cache_resource
 def load_models():
     """Load pre-trained models"""
+    import os
+    
+    # Check if file exists
+    if not os.path.exists('trained_models.pkl'):
+        st.error("### ❌ trained_models.pkl not found!")
+        st.error("")
+        st.error("**This app requires pre-trained models.**")
+        st.info("### 📋 Setup Instructions:")
+        
+        with st.expander("🔧 Step-by-step setup", expanded=True):
+            st.markdown("""
+            ### Option 1: Train Models Locally (Recommended)
+            
+            **On your local machine:**
+            
+            1. Download these files from the repo:
+               - `train_local.py`
+               - `pipeline.py`
+               - `utils.py`
+               - Your dataset: `merged_output.csv`
+            
+            2. Run training:
+               ```bash
+               pip install pandas numpy scikit-learn imbalanced-learn xgboost
+               python train_local.py
+               ```
+            
+            3. Wait 10-15 minutes. This creates:
+               - ✅ `trained_models.pkl`
+               - ✅ `metrics.json`
+               - ✅ `sample_predictions.json`
+               - ✅ `feature_stats.json`
+            
+            4. Upload these 4 files to your GitHub repo
+            
+            5. Redeploy this app!
+            
+            ---
+            
+            ### Option 2: Use Pre-trained Models (Quick Test)
+            
+            If you already have trained models:
+            1. Make sure `trained_models.pkl` is in your repo
+            2. Check file size (should be 50-100MB)
+            3. Redeploy the app
+            
+            ---
+            
+            ### Option 3: Use Google Drive (Large Files)
+            
+            If file is too large for GitHub:
+            1. Upload `trained_models.pkl` to Google Drive
+            2. Get shareable link
+            3. Add download code (we can help with this)
+            """)
+        
+        st.stop()
+    
     try:
         with open('trained_models.pkl', 'rb') as f:
             models = pickle.load(f)
         return models
-    except FileNotFoundError:
-        st.error("❌ trained_models.pkl not found!")
-        st.error("Run train_local.py on your local machine first")
-        return None
+    except Exception as e:
+        st.error(f"### ❌ Error loading models: {str(e)}")
+        st.error("The model file might be corrupted or incompatible.")
+        st.info("Try retraining with `train_local.py` and re-uploading.")
+        st.stop()
 
 @st.cache_data
 def load_metrics():
     """Load pre-computed metrics"""
+    import os
+    if not os.path.exists('metrics.json'):
+        return None
     try:
         with open('metrics.json', 'r') as f:
             return json.load(f)
-    except FileNotFoundError:
+    except Exception as e:
+        st.warning(f"Could not load metrics: {e}")
         return None
 
 @st.cache_data
 def load_sample_predictions():
     """Load sample predictions"""
+    import os
+    if not os.path.exists('sample_predictions.json'):
+        return None
     try:
         with open('sample_predictions.json', 'r') as f:
             return json.load(f)
-    except FileNotFoundError:
+    except Exception as e:
+        st.warning(f"Could not load sample predictions: {e}")
         return None
 
 @st.cache_data
 def load_feature_stats():
     """Load feature statistics"""
+    import os
+    if not os.path.exists('feature_stats.json'):
+        return None
     try:
         with open('feature_stats.json', 'r') as f:
             return json.load(f)
-    except FileNotFoundError:
+    except Exception as e:
+        st.warning(f"Could not load feature stats: {e}")
         return None
 
 def predict_single_sample(models, features):
@@ -120,28 +191,10 @@ st.caption("Trained locally • Deployed for inference • No training overhead"
 st.markdown("---")
 
 # Load everything
-models = load_models()
+models = load_models()  # This will handle missing files with clear instructions
 metrics = load_metrics()
 sample_preds = load_sample_predictions()
 feature_stats = load_feature_stats()
-
-if models is None:
-    st.error("### ⚠️ Models not found!")
-    st.info("**Setup Instructions:**")
-    st.code("""
-# 1. On your local machine, run:
-python train_local.py
-
-# 2. This creates 4 files:
-#    - trained_models.pkl
-#    - metrics.json
-#    - sample_predictions.json
-#    - feature_stats.json
-
-# 3. Add these files to your GitHub repo
-# 4. Deploy this app to Streamlit Cloud
-    """)
-    st.stop()
 
 # Sidebar - Mode selection
 st.sidebar.header("⚙️ Mode Selection")
