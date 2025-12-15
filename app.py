@@ -170,6 +170,35 @@ def generate_realistic_sample(feature_names):
         sample.append(float(value))
     
     return sample, is_benign
+
+def predict_single_sample(models, features):
+    """Make prediction - CatBoost + LOF"""
+    features_scaled = models['scaler'].transform([features])
+    
+    # CatBoost
+    catboost_proba = models['catboost_model'].predict_proba(features_scaled)[0, 1]
+    catboost_pred = 1 if catboost_proba >= models['catboost_threshold'] else 0
+    
+    # LOF
+    lof_decision = models['lof_model'].predict(features_scaled)[0]
+    lof_pred = 1 if lof_decision == -1 else 0
+    lof_score = models['lof_model'].score_samples(features_scaled)[0]
+    scaled_score = lof_score * 2.0
+    lof_proba = 1 / (1 + np.exp(scaled_score))
+    lof_proba = np.clip(lof_proba, 0.01, 0.99)
+    
+    # Voting
+    voting_pred = max(catboost_pred, lof_pred)
+    voting_proba = max(catboost_proba, lof_proba)
+    
+    return {
+        'catboost_pred': catboost_pred,
+        'catboost_proba': catboost_proba,
+        'lof_pred': lof_pred,
+        'lof_proba': lof_proba,
+        'voting_pred': voting_pred,
+        'voting_proba': voting_proba
+    }
     """Make prediction - CatBoost + LOF"""
     features_scaled = models['scaler'].transform([features])
     
