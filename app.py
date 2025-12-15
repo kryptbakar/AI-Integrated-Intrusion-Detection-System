@@ -234,30 +234,65 @@ def load_sample_predictions():
     except Exception as e:
         st.warning(f"Could not load sample predictions: {e}")
         return None
+
+
 def smart_default(feature, feature_distributions, force_class=None):
     """
-    Generate realistic random values based on training distributions.
+    Generate domain-aware random values.
+
+    Preference:
+    1) If the feature has a known physical range (`FEATURE_RANGES`), draw from that
+       range so values look realistic (e.g. Destination Port 0–65535).
+    2) Otherwise, fall back to the (scaled) training distributions if available.
+
     force_class: None | 'benign' | 'attack'
     """
-    stats = feature_distributions.get(feature)
-    if not stats:
-        return 0.0
+    # 1) Domain-based ranges for human-readable values
+    if feature in FEATURE_RANGES:
+        low, high = FEATURE_RANGES[feature]
 
-    benign = stats["benign"]
-    attack = stats["attack"]
+        # Simple class-aware tweaks for a few key features
+        if feature == "Destination Port":
+            # Common benign service ports
+            common_benign_ports = [53, 80, 110, 143, 443, 587, 993]
+            if force_class == "benign":
+                # 70%: pick a well-known service port, 30%: any valid port
+                if np.random.rand() < 0.7:
+                    return float(np.random.choice(common_benign_ports))
+                return float(np.random.randint(low, high + 1))
+            elif force_class == "attack":
+                # For attacks, any port is fair game
+                return float(np.random.randint(low, high + 1))
 
-    if force_class == "benign":
-        mu, sigma = benign["mean"], benign["std"]
-    elif force_class == "attack":
-        mu, sigma = attack["mean"], attack["std"]
-    else:
-        # Balanced: randomly choose
-        if np.random.rand() < 0.5:
-            mu, sigma = benign["mean"], benign["std"]
-        else:
-            mu, sigma = attack["mean"], attack["std"]
+        # Generic case: draw from the middle of the range
+        span = high - low
+        center = low + 0.5 * span
+        sigma = 0.2 * span  # concentrate around the middle
+        val = np.random.normal(center, sigma)
+        return float(np.clip(val, low, high))
 
-    return float(np.random.normal(mu, sigma))
+    # 2) Fallback: legacy scaled distributions (if present)
+    if feature_distributions:
+        stats = feature_distributions.get(feature)
+        if stats:
+            benign = stats["benign"]
+            attack = stats["attack"]
+
+            if force_class == "benign":
+                mu, sigma = benign["mean"], benign["std"]
+            elif force_class == "attack":
+                mu, sigma = attack["mean"], attack["std"]
+            else:
+                # Balanced: randomly choose
+                if np.random.rand() < 0.5:
+                    mu, sigma = benign["mean"], benign["std"]
+                else:
+                    mu, sigma = attack["mean"], attack["std"]
+
+            return float(np.random.normal(mu, sigma))
+
+    # 3) Last resort
+    return 0.0
 
 def predict_single_sample(models, features):
     """Make prediction on single sample - CatBoost + LOF"""
