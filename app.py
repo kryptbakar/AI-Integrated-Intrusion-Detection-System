@@ -30,19 +30,157 @@ st.markdown('''
 
 @st.cache_resource
 def load_models():
-    """Load pre-trained models"""
-    if not os.path.exists('trained_models.pkl'):
-        st.error("### ❌ Model file not found!")
-        st.info("Please upload trained_models.pkl via Google Drive or GitHub")
-        st.stop()
+    """Load pre-trained models with Google Drive support"""
     
-    try:
-        with open('trained_models.pkl', 'rb') as f:
-            models = pickle.load(f)
-        return models
-    except Exception as e:
-        st.error(f"❌ Error loading models: {str(e)}")
-        st.stop()
+    # Check if file exists locally
+    if os.path.exists('trained_models.pkl'):
+        try:
+            with open('trained_models.pkl', 'rb') as f:
+                models = pickle.load(f)
+            st.sidebar.success("✅ Models loaded")
+            return models
+        except Exception as e:
+            st.error(f"❌ Error loading: {str(e)}")
+            if st.button("🗑️ Delete and re-upload"):
+                os.remove('trained_models.pkl')
+                st.rerun()
+    
+    # Show upload interface if model not found
+    st.error("### ❌ Model file not found!")
+    st.markdown("---")
+    
+    # Tabs for different options
+    tab1, tab2 = st.tabs(["🔗 Google Drive Link", "📋 Instructions"])
+    
+    with tab1:
+        st.markdown("### 🔗 Download from Google Drive")
+        st.markdown("""
+        **Steps to get your link:**
+        1. Upload `trained_models.pkl` to Google Drive
+        2. Right-click → Share → "Anyone with the link"
+        3. Copy the link
+        4. Paste below and click Download
+        """)
+        
+        st.markdown("---")
+        
+        gdrive_link = st.text_input(
+            "Google Drive Link:",
+            placeholder="https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing",
+            help="Paste your Google Drive shareable link here"
+        )
+        
+        if st.button("📥 Download from Google Drive", type="primary"):
+            if not gdrive_link:
+                st.error("❌ Please enter a Google Drive link")
+            else:
+                try:
+                    # Extract file ID
+                    if '/d/' in gdrive_link:
+                        file_id = gdrive_link.split('/d/')[1].split('/')[0]
+                    elif 'id=' in gdrive_link:
+                        file_id = gdrive_link.split('id=')[1].split('&')[0]
+                    else:
+                        file_id = gdrive_link
+                    
+                    st.info(f"File ID: {file_id}")
+                    
+                    # Download using requests (no gdown needed)
+                    import requests
+                    
+                    def download_file_from_google_drive(file_id, destination):
+                        URL = "https://docs.google.com/uc?export=download"
+                        
+                        session = requests.Session()
+                        response = session.get(URL, params={'id': file_id}, stream=True)
+                        
+                        # Check for download warning
+                        token = None
+                        for key, value in response.cookies.items():
+                            if key.startswith('download_warning'):
+                                token = value
+                        
+                        if token:
+                            params = {'id': file_id, 'confirm': token}
+                            response = session.get(URL, params=params, stream=True)
+                        
+                        # Save file
+                        CHUNK_SIZE = 32768
+                        with open(destination, "wb") as f:
+                            for chunk in response.iter_content(CHUNK_SIZE):
+                                if chunk:
+                                    f.write(chunk)
+                    
+                    with st.spinner("📥 Downloading from Google Drive (300MB)... This may take 1-2 minutes"):
+                        download_file_from_google_drive(file_id, 'trained_models.pkl')
+                    
+                    # Check if downloaded
+                    if os.path.exists('trained_models.pkl'):
+                        file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
+                        if file_size > 1:  # At least 1MB
+                            st.success(f"✅ Downloaded {file_size:.1f} MB!")
+                            st.info("🔄 Reloading page...")
+                            st.rerun()
+                        else:
+                            st.error("❌ Download failed - file too small")
+                            os.remove('trained_models.pkl')
+                    else:
+                        st.error("❌ Download failed")
+                        
+                except Exception as e:
+                    st.error(f"❌ Download error: {str(e)}")
+                    st.info("**Troubleshooting:**")
+                    st.markdown("""
+                    - Make sure the link is set to "Anyone with the link"
+                    - Try copying the link again
+                    - Check if file ID is correct
+                    """)
+        
+        st.markdown("---")
+        st.markdown("**Example link format:**")
+        st.code("https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing")
+    
+    with tab2:
+        st.markdown("""
+        ### 📋 How to Setup Google Drive Link
+        
+        **Step 1: Upload to Google Drive**
+        ```bash
+        # After training locally:
+        python train_catboost_lof.py
+        # Creates trained_models.pkl (300MB)
+        ```
+        
+        1. Go to [drive.google.com](https://drive.google.com)
+        2. Click "New" → "File upload"
+        3. Select `trained_models.pkl`
+        4. Wait for upload (2-3 minutes)
+        
+        **Step 2: Make Shareable**
+        1. Right-click on the uploaded file
+        2. Click "Share"
+        3. Change to **"Anyone with the link"**
+        4. Set permission to **"Viewer"**
+        5. Click "Copy link"
+        
+        **Step 3: Use in App**
+        1. Go to "🔗 Google Drive Link" tab
+        2. Paste the link
+        3. Click "📥 Download from Google Drive"
+        4. Wait 1-2 minutes
+        5. App reloads with models!
+        
+        ---
+        
+        ### ⚠️ Important Notes
+        
+        - File must be set to "Anyone with the link"
+        - Download takes 1-2 minutes for 300MB
+        - Models are cached after first download
+        - Use GitHub for small files (<100MB)
+        """)
+    
+    st.stop()
 
 @st.cache_data
 def load_metrics():
