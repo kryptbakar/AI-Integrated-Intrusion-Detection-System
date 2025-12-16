@@ -83,57 +83,97 @@ def load_models():
                     else:
                         file_id = gdrive_link
                     
-                    st.info(f"File ID: {file_id}")
+                    st.info(f"📋 File ID: `{file_id}`")
                     
-                    # Download using requests (no gdown needed)
-                    import requests
-                    
-                    def download_file_from_google_drive(file_id, destination):
-                        URL = "https://docs.google.com/uc?export=download"
+                    # Try using gdown first (better for large files)
+                    try:
+                        import gdown
                         
-                        session = requests.Session()
-                        response = session.get(URL, params={'id': file_id}, stream=True)
+                        progress = st.progress(0)
+                        status = st.empty()
                         
-                        # Check for download warning
-                        token = None
-                        for key, value in response.cookies.items():
-                            if key.startswith('download_warning'):
-                                token = value
+                        status.info("📥 Downloading from Google Drive...")
+                        download_url = f"https://drive.google.com/uc?id={file_id}"
                         
-                        if token:
-                            params = {'id': file_id, 'confirm': token}
-                            response = session.get(URL, params=params, stream=True)
+                        gdown.download(download_url, 'trained_models.pkl', quiet=False, fuzzy=True)
                         
-                        # Save file
-                        CHUNK_SIZE = 32768
-                        with open(destination, "wb") as f:
-                            for chunk in response.iter_content(CHUNK_SIZE):
-                                if chunk:
-                                    f.write(chunk)
-                    
-                    with st.spinner("📥 Downloading from Google Drive (300MB)... This may take 1-2 minutes"):
-                        download_file_from_google_drive(file_id, 'trained_models.pkl')
-                    
-                    # Check if downloaded
-                    if os.path.exists('trained_models.pkl'):
-                        file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
-                        if file_size > 1:  # At least 1MB
-                            st.success(f"✅ Downloaded {file_size:.1f} MB!")
-                            st.info("🔄 Reloading page...")
-                            st.rerun()
+                        if os.path.exists('trained_models.pkl'):
+                            file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
+                            
+                            if file_size > 10:  # At least 10MB
+                                progress.progress(100)
+                                status.success(f"✅ Downloaded {file_size:.1f} MB!")
+                                st.balloons()
+                                st.info("🔄 Reloading app...")
+                                import time
+                                time.sleep(2)
+                                st.rerun()
+                            else:
+                                status.error(f"❌ File too small ({file_size:.1f} MB)")
+                                os.remove('trained_models.pkl')
+                                st.warning("**Possible issues:**")
+                                st.markdown("""
+                                1. Link not set to "Anyone with the link"
+                                2. Wrong file ID
+                                3. File was deleted from Google Drive
+                                
+                                **How to fix:**
+                                - Go to Google Drive
+                                - Right-click your file → Share
+                                - Set to "Anyone with the link" (Important!)
+                                - Copy the link again
+                                """)
                         else:
-                            st.error("❌ Download failed - file too small")
-                            os.remove('trained_models.pkl')
-                    else:
-                        st.error("❌ Download failed")
+                            status.error("❌ Download failed")
+                    
+                    except ImportError:
+                        # Fallback to requests if gdown not available
+                        st.warning("⚠️ Using fallback download method (may not work for large files)")
+                        
+                        import requests
+                        
+                        def download_file_from_google_drive(file_id, destination):
+                            URL = "https://docs.google.com/uc?export=download&confirm=1"
+                            
+                            session = requests.Session()
+                            response = session.get(URL, params={'id': file_id}, stream=True)
+                            
+                            # Save file
+                            CHUNK_SIZE = 32768
+                            with open(destination, "wb") as f:
+                                for chunk in response.iter_content(CHUNK_SIZE):
+                                    if chunk:
+                                        f.write(chunk)
+                        
+                        with st.spinner("📥 Downloading... This may take 2-3 minutes"):
+                            download_file_from_google_drive(file_id, 'trained_models.pkl')
+                        
+                        if os.path.exists('trained_models.pkl'):
+                            file_size = os.path.getsize('trained_models.pkl') / 1024 / 1024
+                            if file_size > 10:
+                                st.success(f"✅ Downloaded {file_size:.1f} MB!")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ File too small ({file_size:.1f} MB) - Check sharing settings")
+                                os.remove('trained_models.pkl')
                         
                 except Exception as e:
                     st.error(f"❌ Download error: {str(e)}")
-                    st.info("**Troubleshooting:**")
                     st.markdown("""
-                    - Make sure the link is set to "Anyone with the link"
-                    - Try copying the link again
-                    - Check if file ID is correct
+                    ### 🔧 Troubleshooting Steps:
+                    
+                    **1. Check Google Drive Sharing:**
+                    - File must be set to "Anyone with the link"
+                    - NOT "Restricted" or "Only people with access"
+                    
+                    **2. Verify the Link:**
+                    - Copy the link directly from Google Drive
+                    - Don't modify it
+                    - Should look like: `https://drive.google.com/file/d/...`
+                    
+                    **3. Alternative:**
+                    - Try uploading to a different cloud service
+                    - Or use Git LFS for GitHub
                     """)
         
         st.markdown("---")
