@@ -261,6 +261,6 @@ These artifacts are designed to be consumed directly by the Streamlit app for vi
 
 ## ✅ Notes
 
-- The repository has the training and inference pieces required to reproduce results locally. To fully run training, place a CSV named `merged_output.csv` in the project root or change the path in `train_catboost_lof.py`.
+- The repository has the training and inference pieces required to reproduce results locally. To fully run training, place a CSV named `merged_output.csv` in the project root or change the path in `train_catboost_lof.py`
 
 ---
